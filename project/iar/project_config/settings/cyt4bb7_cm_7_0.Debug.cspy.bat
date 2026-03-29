@@ -25,7 +25,7 @@ if not "%~1" == "" goto debugFile
 
 @echo on 
 
-"E:\IAR\common\bin\cspybat" -f "E:\smart car\project\20260325\project\iar\project_config\settings\cyt4bb7_cm_7_0.Debug.general.xcl" --backend -f "E:\smart car\project\20260325\project\iar\project_config\settings\cyt4bb7_cm_7_0.Debug.driver.xcl" 
+"E:\IAR\common\bin\cspybat" -f "E:\smart car\project\20260329-25\project\iar\project_config\settings\cyt4bb7_cm_7_0.Debug.general.xcl" --backend -f "E:\smart car\project\20260329-25\project\iar\project_config\settings\cyt4bb7_cm_7_0.Debug.driver.xcl" 
 
 @echo off 
 goto end 
@@ -34,7 +34,7 @@ goto end
 
 @echo on 
 
-"E:\IAR\common\bin\cspybat" -f "E:\smart car\project\20260325\project\iar\project_config\settings\cyt4bb7_cm_7_0.Debug.general.xcl" "--debug_file=%~1" --backend -f "E:\smart car\project\20260325\project\iar\project_config\settings\cyt4bb7_cm_7_0.Debug.driver.xcl" 
+"E:\IAR\common\bin\cspybat" -f "E:\smart car\project\20260329-25\project\iar\project_config\settings\cyt4bb7_cm_7_0.Debug.general.xcl" "--debug_file=%~1" --backend -f "E:\smart car\project\20260329-25\project\iar\project_config\settings\cyt4bb7_cm_7_0.Debug.driver.xcl" 
 
 @echo off 
 :end

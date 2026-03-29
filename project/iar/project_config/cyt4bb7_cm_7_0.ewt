@@ -1464,6 +1464,12 @@
         <file>
             <name>$PROJ_DIR$\..\..\code\PID.h</name>
         </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\QMC5883L.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\QMC5883L.h</name>
+        </file>
     </group>
     <group>
         <name>doc</name>

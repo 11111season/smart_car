@@ -18,9 +18,12 @@ void stabilization(float dt)
   
     //  外环目标值
 
-    PIDPitch.target = 0;
     PIDRoll.target  = 0;
+    PIDPitch.target = 0;
     PIDYaw.target   = 180;
+
+//    PIDRateX.target =0;     
+
     
     //  内环测量值 = 陀螺仪角速度 (°/s)
     PIDRateX.measured = imu_data.gyro_x;
@@ -62,11 +65,11 @@ void stabilization(float dt)
     m3 = LIMIT(m3, MOTOR_MIN_DUTY, MOTOR_MAX_DUTY);
     m4 = LIMIT(m4, MOTOR_MIN_DUTY, MOTOR_MAX_DUTY);
     
-//    //  电机输出
-//    motor_set(1, m1);
-//    motor_set(2, m2);
-//    motor_set(3, m3);
-//    motor_set(4, m4);
+    //  电机输出
+    motor_set(1, m1);
+    motor_set(2, m2);
+    motor_set(3, m3);
+    motor_set(4, m4);
 }
 
 

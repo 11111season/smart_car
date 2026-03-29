@@ -50,13 +50,18 @@ void ALL_Init()
     //PID参数
     PID_param_Init();
     
+    //磁力计
+    if(    qmc5883l_init()==0)
+      printf("success");
+
+    
     // 初始化时复位PID数据，防止随机值导致电机输出异常
     PID_Rest(pPidObject, 6);
 
 //--------------pit-------------
     pit_ms_init(PIT_CH0, 5);    //5ms
       
-    
+    pit_ms_init(PIT_CH1, 5);   //10ms
 
 }
  

@@ -107,7 +107,7 @@
 #include "INIT.h"
 #include "PID.h"
 #include "control.h"
-
+#include "QMC5883L.h"
 
 //=====================================================组件应用层=====================================================
 #include "seekfree_assistant.h"

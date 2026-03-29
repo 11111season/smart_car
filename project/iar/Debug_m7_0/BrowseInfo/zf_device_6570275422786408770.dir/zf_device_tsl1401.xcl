@@ -1,53 +1,53 @@
-"E:\smart car\project\20260325\libraries\zf_device\zf_device_tsl1401.c"
+"E:\smart car\project\20260329-25\libraries\zf_device\zf_device_tsl1401.c"
 -std=c11
 -ferror-limit=0
 -fbracket-depth=512
 -funsigned-char
 -MD
 -MF
-E:\smart car\project\20260325\project\iar\Debug_m7_0\BrowseInfo\zf_device_6570275422786408770.dir\zf_device_tsl1401.pbi.dep
+E:\smart car\project\20260329-25\project\iar\Debug_m7_0\BrowseInfo\zf_device_6570275422786408770.dir\zf_device_tsl1401.pbi.dep
 -o
-E:\smart car\project\20260325\project\iar\Debug_m7_0\BrowseInfo\zf_device_6570275422786408770.dir\zf_device_tsl1401.pbi
+E:\smart car\project\20260329-25\project\iar\Debug_m7_0\BrowseInfo\zf_device_6570275422786408770.dir\zf_device_tsl1401.pbi
 -I
-E:\smart car\project\20260325\libraries\zf_device
+E:\smart car\project\20260329-25\libraries\zf_device
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\common\hdr\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\common\hdr\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\common\hdr\cmsis\include\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\common\hdr\cmsis\include\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\common\src\drivers\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\common\src\drivers\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\common\src\mw\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\common\src\mw\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\hdr\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\hdr\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\hdr\ip\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\hdr\ip\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\hdr\mcureg\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\hdr\mcureg\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\src\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\src\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\src\interrupts\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\src\interrupts\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\src\mw\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\src\mw\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\src\drivers\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\src\drivers\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\src\system\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\tviibh4m\src\system\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\sdk\common\hdr\cmsis\dsp\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\sdk\common\hdr\cmsis\dsp\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\zf_common\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\zf_common\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\zf_driver\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\zf_driver\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\zf_device\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\zf_device\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\..\libraries\zf_components\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\..\libraries\zf_components\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\user\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\user\
 -I
-E:\smart car\project\20260325\project\iar\project_config\..\..\code\
+E:\smart car\project\20260329-25\project\iar\project_config\..\..\code\
 -I
 E:\IAR\arm\inc\c\aarch32
 -I
@@ -55,43 +55,43 @@ E:\IAR\arm\inc
 -I
 E:\IAR\arm\inc\c
 -I
-E:\smart car\project\20260325\libraries\sdk\common\hdr
+E:\smart car\project\20260329-25\libraries\sdk\common\hdr
 -I
-E:\smart car\project\20260325\libraries\sdk\common\hdr\cmsis\include
+E:\smart car\project\20260329-25\libraries\sdk\common\hdr\cmsis\include
 -I
-E:\smart car\project\20260325\libraries\sdk\common\src\drivers
+E:\smart car\project\20260329-25\libraries\sdk\common\src\drivers
 -I
-E:\smart car\project\20260325\libraries\sdk\common\src\mw
+E:\smart car\project\20260329-25\libraries\sdk\common\src\mw
 -I
-E:\smart car\project\20260325\libraries\sdk\tviibh4m\hdr
+E:\smart car\project\20260329-25\libraries\sdk\tviibh4m\hdr
 -I
-E:\smart car\project\20260325\libraries\sdk\tviibh4m\hdr\ip
+E:\smart car\project\20260329-25\libraries\sdk\tviibh4m\hdr\ip
 -I
-E:\smart car\project\20260325\libraries\sdk\tviibh4m\hdr\mcureg
+E:\smart car\project\20260329-25\libraries\sdk\tviibh4m\hdr\mcureg
 -I
-E:\smart car\project\20260325\libraries\sdk\tviibh4m\src
+E:\smart car\project\20260329-25\libraries\sdk\tviibh4m\src
 -I
-E:\smart car\project\20260325\libraries\sdk\tviibh4m\src\interrupts
+E:\smart car\project\20260329-25\libraries\sdk\tviibh4m\src\interrupts
 -I
-E:\smart car\project\20260325\libraries\sdk\tviibh4m\src\mw
+E:\smart car\project\20260329-25\libraries\sdk\tviibh4m\src\mw
 -I
-E:\smart car\project\20260325\libraries\sdk\tviibh4m\src\drivers
+E:\smart car\project\20260329-25\libraries\sdk\tviibh4m\src\drivers
 -I
-E:\smart car\project\20260325\libraries\sdk\tviibh4m\src\system
+E:\smart car\project\20260329-25\libraries\sdk\tviibh4m\src\system
 -I
-E:\smart car\project\20260325\libraries\sdk\common\hdr\cmsis\dsp
+E:\smart car\project\20260329-25\libraries\sdk\common\hdr\cmsis\dsp
 -I
-E:\smart car\project\20260325\libraries\zf_common
+E:\smart car\project\20260329-25\libraries\zf_common
 -I
-E:\smart car\project\20260325\libraries\zf_driver
+E:\smart car\project\20260329-25\libraries\zf_driver
 -I
-E:\smart car\project\20260325\libraries\zf_device
+E:\smart car\project\20260329-25\libraries\zf_device
 -I
-E:\smart car\project\20260325\libraries\zf_components
+E:\smart car\project\20260329-25\libraries\zf_components
 -I
-E:\smart car\project\20260325\project\user
+E:\smart car\project\20260329-25\project\user
 -I
-E:\smart car\project\20260325\project\code
+E:\smart car\project\20260329-25\project\code
 -D__CHAR_BITS__=8
 -D__CHAR_MAX__=0xff
 -D__CHAR_MIN__=0

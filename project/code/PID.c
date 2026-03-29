@@ -7,13 +7,13 @@ void PID_param_Init(void)
 {
     //============ 内环角速度PID (需要PD控制，积分可能不需要) ============
     // Roll 内环 - 控制横滚角速度
-    PIDRateX.kp = 0.0f; //1.2f;          // 比例增益 (根据实际调整)
+    PIDRateX.kp = 0.1f; //1.2f;          // 比例增益 (根据实际调整)
     PIDRateX.ki = 0.0f;          // 积分增益 (内环通常不需要)
-    PIDRateX.kd = 0.0f; //0.05f;         // 微分增益 (提供阻尼)
+    PIDRateX.kd = 0.03f; //0.05f;         // 微分增益 (提供阻尼)
     PIDRateX.Integ_LimitHigh = 0;
     PIDRateX.Integ_LimitLow = 0;
-    PIDRateX.Out_LimitHigh = 400; // 内环输出限幅
-    PIDRateX.Out_LimitLow = -400;
+    PIDRateX.Out_LimitHigh = 200; // 内环输出限幅
+    PIDRateX.Out_LimitLow = -200;
     
     // Pitch 内环 - 控制俯仰角速度
     PIDRateY.kp = 0.0f; //1.2f;
@@ -35,7 +35,7 @@ void PID_param_Init(void)
     
     //============ 外环角度PID (只需要P控制) ============
     // Roll 外环 - 控制横滚角度
-    PIDRoll.kp = 0.0f; //6.0f;           // 角度P增益
+    PIDRoll.kp = 2.0f; //6.0f;           // 角度P增益
     PIDRoll.ki = 0.0f;
     PIDRoll.kd = 0.0f;
     PIDRoll.Integ_LimitHigh = 0;
@@ -83,7 +83,7 @@ void PID_Update(_PID_param_st* pid, const float dt)
 {
     float error;
     float deriv;
-    float output;
+    //float output;
     
     if(dt <= 0) return;
     
@@ -98,7 +98,7 @@ void PID_Update(_PID_param_st* pid, const float dt)
     pid->out = pid->kp * error + pid->kd * deriv;  
     
     // ===== 抗积分饱和 =====
-    if(output < pid->Out_LimitHigh && output > pid->Out_LimitLow)
+    if(pid->out < pid->Out_LimitHigh && pid->out > pid->Out_LimitLow)
     {
         pid->integ += error * dt;
     }
