@@ -77,8 +77,8 @@
 
       
  //         qmc5883l_get_all();
-
-          printf("%5f\r\n", qmc5883l_heading);      
+//          camera_process();
+//          printf("%5f\r\n", qmc5883l_heading);      
       
 //-------------------printf串口打印------------      
 //        printf("111\r\n");
@@ -108,7 +108,7 @@
 //        printf("%5f, %5f, %5f\r\n",PIDRoll.out, PIDPitch.out, PIDYaw.out);
 //        printf("%5f, %5f, %5f\r\n",PIDRateX.out, PIDRateY.out, PIDRateZ.out);
         //ROLL环
- //       printf("%5f, %5f\r\n", PIDRateX.target,imu_data.gyro_x);//内环
+        printf("%5f, %5f\r\n", PIDRateX.target,imu_data.gyro_x);//内环
 //        printf("%5f, %5f\r\n",PIDRoll.out,imu_data.gyro_x);//内环
 
 //        printf("%5f, %5f\r\n",PIDRoll.target,imu660rc_roll);//外环
@@ -135,7 +135,7 @@
         
         
         
-        system_delay_ms(10);
+//        system_delay_ms(10);
         // 此处编写需要循环执行的代码
     }
 }

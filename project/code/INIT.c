@@ -53,6 +53,9 @@ void ALL_Init()
     //磁力计
     if(    qmc5883l_init()==0)
       printf("success");
+    
+    //摄像头
+//    camera_init();
 
     
     // 初始化时复位PID数据，防止随机值导致电机输出异常

@@ -7,9 +7,9 @@ void PID_param_Init(void)
 {
     //============ 内环角速度PID (需要PD控制，积分可能不需要) ============
     // Roll 内环 - 控制横滚角速度
-    PIDRateX.kp = 0.1f; //1.2f;          // 比例增益 (根据实际调整)
+    PIDRateX.kp = 0.3f; //1.2f;          // 比例增益 (根据实际调整)
     PIDRateX.ki = 0.0f;          // 积分增益 (内环通常不需要)
-    PIDRateX.kd = 0.03f; //0.05f;         // 微分增益 (提供阻尼)
+    PIDRateX.kd = 0.0f; //0.05f;         // 微分增益 (提供阻尼)
     PIDRateX.Integ_LimitHigh = 0;
     PIDRateX.Integ_LimitLow = 0;
     PIDRateX.Out_LimitHigh = 200; // 内环输出限幅
@@ -35,7 +35,7 @@ void PID_param_Init(void)
     
     //============ 外环角度PID (只需要P控制) ============
     // Roll 外环 - 控制横滚角度
-    PIDRoll.kp = 2.0f; //6.0f;           // 角度P增益
+    PIDRoll.kp = 0.02f; //6.0f;           // 角度P增益
     PIDRoll.ki = 0.0f;
     PIDRoll.kd = 0.0f;
     PIDRoll.Integ_LimitHigh = 0;
@@ -70,51 +70,68 @@ void PID_Rest(_PID_param_st **pid, const uint8_t len)
     for(i = 0; i < len; i++)
     {
         pid[i]->integ = 0;
-        pid[i]->pre_Error = 0;
+        pid[i]->last_error = 0;
         pid[i]->out = 0;
         pid[i]->target = 0;
-        pid[i]->measured = 0;
+        pid[i]->last_measured = 0;
     }
+}
+
+void PID_Reset(_PID_param_st *pid)
+{
+    pid->error = 0;
+    pid->last_error = 0;
+
+    pid->integ = 0;
+
+    pid->deriv = 0;
+    pid->last_deriv = 0;
+
+    pid->measured = 0;
+    pid->last_measured = 0;
+
+    pid->out = 0;
 }
 
 
 //-------------PID计算-------------
 void PID_Update(_PID_param_st* pid, const float dt)
 {
-    float error;
-    float deriv;
-    //float output;
+    float temp_output;
     
     if(dt <= 0) return;
     
-    error = pid->target - pid->measured; //当前角度与实际角度的误差
+    //当前角度与实际角度的误差
+    pid->error = pid->target - pid->measured; 
+    
+    // 测量微分（抗噪）
+    pid->deriv = -(pid->measured - pid->last_measured) / dt;
 
-    pid->integ += error * dt;     //误差积分累加值
+    // 微分滤波
+    pid->deriv = 0.7f * pid->last_deriv + 0.3f * pid->deriv;
+    pid->last_deriv = pid->deriv;
     
-    // ===== 微分（抗噪）=====
-    deriv = -(pid->measured - pid->prev_measured) / dt;
+    // 预测输出
+    temp_output = pid->kp * pid->error + pid->ki * pid->integ + pid->kd * pid->deriv;  
     
-    // ===== P + D =====
-    pid->out = pid->kp * error + pid->kd * deriv;  
-    
-    // ===== 抗积分饱和 =====
-    if(pid->out < pid->Out_LimitHigh && pid->out > pid->Out_LimitLow)
+    // 抗积分饱和 
+    if(temp_output < pid->Out_LimitHigh && temp_output > pid->Out_LimitLow)
     {
-        pid->integ += error * dt;
+        pid->integ += pid->error * dt;
     }
     
     // 积分限幅 
     pid->integ = LIMIT(pid->integ, pid->Integ_LimitLow, pid->Integ_LimitHigh);
     
     //输出
-    pid->out = pid->kp * error + pid->ki * pid->integ + pid->kd * deriv; //PID输出
+    pid->out = pid->kp * pid->error + pid->ki * pid->integ + pid->kd * pid->deriv; //PID输出
     
     // 输出限幅
     pid->out = LIMIT(pid->out, pid->Out_LimitLow, pid->Out_LimitHigh);
     
     //更新上次的误差
-    pid->pre_Error = error;  
-    pid->prev_measured = pid->measured;
+    //pid->last_error = error;  //误差微分，待定
+    pid->last_measured = pid->measured;//测量微分
 }
 
 

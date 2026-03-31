@@ -21,18 +21,20 @@
 //PID
 typedef volatile struct
 {
-	float target;     //< set point
-	float offset;      //
-	float pre_Error;    //< previous error
-	float integ;        //< integral
-	float kp;           //< proportional gain
-	float ki;           //< integral gain
-	float kd;           //< derivative gain
-	float Integ_LimitHigh;       //< integral limit
+	float target;     
+	float error;      
+	float last_error;    
+	float integ;        
+        float deriv;
+        float last_deriv;
+        float measured;
+        float last_measured;
+	float kp;           
+	float ki;           
+	float kd;         
+        float out;
+	float Integ_LimitHigh;       
 	float Integ_LimitLow;
-	float measured;
-        float prev_measured;
-	float out;
 	float Out_LimitHigh;
 	float Out_LimitLow;
 }_PID_param_st;
