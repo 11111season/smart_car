@@ -68,29 +68,22 @@ void PID_Rest(_PID_param_st **pid, const uint8_t len)
 {
     uint8_t i;
     for(i = 0; i < len; i++)
-    {
-        pid[i]->integ = 0;
+    {        
+        pid[i]->error = 0;
         pid[i]->last_error = 0;
-        pid[i]->out = 0;
-        pid[i]->target = 0;
+        
+        pid[i]->measured = 0;
         pid[i]->last_measured = 0;
+        
+        pid[i]->deriv = 0;
+        pid[i]->last_deriv = 0;
+       
+        //上电置0，别的不置
+        pid[i]->target = 0;
+        
+        pid[i]->integ = 0;
+        pid[i]->out = 0;
     }
-}
-
-void PID_Reset(_PID_param_st *pid)
-{
-    pid->error = 0;
-    pid->last_error = 0;
-
-    pid->integ = 0;
-
-    pid->deriv = 0;
-    pid->last_deriv = 0;
-
-    pid->measured = 0;
-    pid->last_measured = 0;
-
-    pid->out = 0;
 }
 
 

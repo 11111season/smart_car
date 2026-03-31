@@ -17,14 +17,13 @@ void stabilization(float dt)
 //    if(!flag.unlock) return; // 未解锁直接返回
   
     //  外环目标值
-
     PIDRoll.target  = 0;
     PIDPitch.target = 0;
     PIDYaw.target   = 180;
-
-//    PIDRateX.target =0;     
-
     
+    //内环目标值
+    PIDRateX.target =0;     
+
     //  内环测量值 = 陀螺仪角速度 (°/s)
     PIDRateX.measured = imu_data.gyro_x;
     PIDRateY.measured = imu_data.gyro_y;
@@ -37,9 +36,9 @@ void stabilization(float dt)
     
     
     //  横滚/俯仰：串级PID (外环→内环)
-    PID_Update(&PIDRoll, dt);           // 外环Roll PID计算
-    PIDRateX.target = PIDRoll.out;      // 外环输出 → 内环期望
-    PID_Update(&PIDRateX, dt);          // 内环Roll PID计算
+//    PID_Update(&PIDRoll, dt);           // 外环Roll PID计算
+//    PIDRateX.target = PIDRoll.out;      // 外环输出 → 内环期望
+      PID_Update(&PIDRateX, dt);          // 内环Roll PID计算
 //
 //    PID_Update(&PIDPitch, dt);          // 外环Pitch PID计算
 //    PIDRateY.target = PIDPitch.out;     // 外环输出 → 内环期望
@@ -52,12 +51,12 @@ void stabilization(float dt)
     
     //  电机混控输出 
     uint16_t THR = 580;
-    //  THR为基础油门，PID输出为修正量
     
-    m1 = (int16_t)THR + (int16_t)PIDRateX.out - (int16_t)PIDRateY.out + (int16_t)PIDRateZ.out; // 左前电机
-    m2 = (int16_t)THR - (int16_t)PIDRateX.out - (int16_t)PIDRateY.out - (int16_t)PIDRateZ.out; // 右前电机
-    m3 = (int16_t)THR - (int16_t)PIDRateX.out + (int16_t)PIDRateY.out + (int16_t)PIDRateZ.out; // 左后电机
-    m4 = (int16_t)THR + (int16_t)PIDRateX.out + (int16_t)PIDRateY.out - (int16_t)PIDRateZ.out; // 右后电机
+    //  THR为基础油门，PID输出为修正量
+    m1 = (int16_t)THR - (int16_t)PIDRateX.out + (int16_t)PIDRateY.out + (int16_t)PIDRateZ.out; // 左前电机
+    m2 = (int16_t)THR + (int16_t)PIDRateX.out + (int16_t)PIDRateY.out - (int16_t)PIDRateZ.out; // 右前电机
+    m3 = (int16_t)THR + (int16_t)PIDRateX.out - (int16_t)PIDRateY.out + (int16_t)PIDRateZ.out; // 左后电机
+    m4 = (int16_t)THR - (int16_t)PIDRateX.out - (int16_t)PIDRateY.out - (int16_t)PIDRateZ.out; // 右后电机
     
     //  电机输出限幅
     m1 = LIMIT(m1, MOTOR_MIN_DUTY, MOTOR_MAX_DUTY);
@@ -65,11 +64,11 @@ void stabilization(float dt)
     m3 = LIMIT(m3, MOTOR_MIN_DUTY, MOTOR_MAX_DUTY);
     m4 = LIMIT(m4, MOTOR_MIN_DUTY, MOTOR_MAX_DUTY);
     
-    //  电机输出
-    motor_set(1, m1);
-    motor_set(2, m2);
-    motor_set(3, m3);
-    motor_set(4, m4);
+//    //  电机输出
+//    motor_set(1, m1);
+//    motor_set(2, m2);
+//    motor_set(3, m3);
+//    motor_set(4, m4);
 }
 
 
