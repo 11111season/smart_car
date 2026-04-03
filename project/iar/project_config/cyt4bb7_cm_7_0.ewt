@@ -1465,6 +1465,12 @@
             <name>$PROJ_DIR$\..\..\code\motor.h</name>
         </file>
         <file>
+            <name>$PROJ_DIR$\..\..\code\myuart.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\myuart.h</name>
+        </file>
+        <file>
             <name>$PROJ_DIR$\..\..\code\PID.c</name>
         </file>
         <file>

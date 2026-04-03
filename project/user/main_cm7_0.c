@@ -63,8 +63,7 @@
 
     while(true)
     {
-        // 此处编写需要循环执行的代码
-        
+
 //    dl1b_get_distance();
 
 //        ips200_show_string( 16*0,  16*4, "pitch=:");     ips200_show_float(16*6,  16*4, imu660rc_pitch,  3,5);
@@ -78,7 +77,7 @@
 
       
 //          printf("%5f\r\n", qmc5883l_heading);  
-          printf("%d\r\n", dl1b_distance_mm);  
+//          printf("%d\r\n", dl1b_distance_mm);  
 
       
       
@@ -136,8 +135,8 @@
         ips200_show_string( 16*0,  16*8, "m2=:");     ips200_show_float(16*6,  16*8, m2, 3,5);
         ips200_show_string( 16*0,  16*9, "m3=:");     ips200_show_float(16*6,  16*9, m3, 3,5);
         ips200_show_string( 16*0,  16*10, "m4=:");    ips200_show_float(16*6,  16*10, m4, 3,5);
+        ips200_show_string( 16*0,  16*11, "test=:");    ips200_show_float(16*6,  16*11, buff_value, 3,5);
 
-        
         
         
 //        system_delay_ms(10);

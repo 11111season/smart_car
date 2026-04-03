@@ -46,8 +46,8 @@ _PID_param_st *(pPidObject[])={&PIDRateX,&PIDRateY,&PIDRateZ,&PIDRoll,&PIDPitch,
 
 //传感器变量
 
-
-
+//串口数据
+float buff_value;
 
 
 
@@ -71,6 +71,13 @@ void ALL_Init()
     
     //TOF
     dl1b_init();
+    
+    //串口   
+    fifo_init(&uart_data_fifo, FIFO_DATA_8BIT, uart_get_data, 64);           // 初始化 fifo 挂载缓冲区   
+    uart_init(UART_INDEX, UART_BAUDRATE, UART_TX_PIN, UART_RX_PIN);         // 初始化串口
+    uart_rx_interrupt(UART_INDEX, 1);                                       // 开启 UART_INDEX 的接收中断
+             
+    
     //摄像头
 //    camera_init();
 
@@ -84,6 +91,9 @@ void ALL_Init()
     pit_ms_init(PIT_CH1, 5);    //5ms
     
     pit_ms_init(PIT_CH2, 20);    //5ms
+    
+    pit_ms_init(PIT_CH10, 10);    //5ms
+
 
 
 }

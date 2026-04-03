@@ -108,6 +108,7 @@
 #include "PID.h"
 #include "control.h"
 #include "QMC5883L.h"
+#include "myuart.h"
 #include "camera.h"
 
 

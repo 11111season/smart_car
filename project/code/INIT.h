@@ -146,7 +146,7 @@ extern uint16_t m2;
 extern uint16_t m3;
 extern uint16_t m4;
 
-
+extern float buff_value;
 
 
 void ALL_Init(void);//全部初始化
