@@ -52,13 +52,19 @@ int main(void)
     // 此处编写用户代码 例如外设初始化代码等
 
 
-    
+        //摄像头
+//        camera_init();
+//        IPS_Init();       
+
 
     // 此处编写用户代码 例如外设初始化代码等
     while(true)
     {
         // 此处编写需要循环执行的代码
         
+//          camera_process();
+//          printf("111\r\n");
+
 
       
       

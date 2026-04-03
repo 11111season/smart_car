@@ -81,11 +81,27 @@ typedef volatile struct
 
 
 
+//sensor
+typedef struct {
+    float height;    
+    float v_z;     
+    
+} _tof_param_st;
 
 
+//世界坐标系参数
+typedef struct {
+    float vx;    //世界x方向速度
+    float vy;     
+    float vz;     
+    float ax;   //世界x方向加速度   
+    float ay;     
+    float az;    
+    float px;    //世界坐标系位置
+    float py;    
+    float pz;    
 
-
-
+} _world_param_st;
 
 
 //----------------------extern------------------------
@@ -98,6 +114,9 @@ extern _PID_param_st PIDRateZ;
 extern _PID_param_st PIDPitch; //外环PID数据,只要P
 extern _PID_param_st PIDRoll;
 extern _PID_param_st PIDYaw;
+
+extern _PID_param_st PIDHeight;//外环
+extern _PID_param_st PIDRateH;//内环
 
 // 外部声明指针数组（在 control.c 中定义）
 extern _PID_param_st *(pPidObject[]);
@@ -113,8 +132,11 @@ extern _remote_param_st rc;
 //flag
 extern _flag_param_st flag;
 
+//sensor
+extern _tof_param_st tof;
 
-
+//世界坐标系
+extern _world_param_st world_data;
 
 //---------------变量-----------
 

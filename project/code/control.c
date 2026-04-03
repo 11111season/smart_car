@@ -1,62 +1,59 @@
 #include "zf_common_headfile.h"
-
-
 /*
-角速度内环 - 调PD
-外角度环传进来
-输出给电机
+1    2
+4    3
+右倾roll>0,23电机+
+抬头pitch>0,12电机+
+逆时针yaw>0,23反牙顺时针+
 */
-
-
-
-
-
-//------------------- 串级PID姿态控制 -------------------
+//------------------- 自稳-------------------
 void stabilization(float dt)
 {
 //    if(!flag.unlock) return; // 未解锁直接返回
   
-    //  外环目标值
-    PIDRoll.target  = 0;
-    PIDPitch.target = 0;
-    PIDYaw.target   = 180;
-    
-    //内环目标值
-    PIDRateX.target =0;     
 
-    //  内环测量值 = 陀螺仪角速度 (°/s)
-    PIDRateX.measured = imu_data.gyro_x;
-    PIDRateY.measured = imu_data.gyro_y;
-    PIDRateZ.measured = imu_data.gyro_z;
     
-    //  外环测量值 = 融合后的姿态角 (°)
-    PIDPitch.measured = eulerAngle.pitch;
-    PIDRoll.measured  = eulerAngle.roll;
-    PIDYaw.measured   = eulerAngle.yaw;
+//---------调试------------
+    PID_Update(&PIDRateX, 0, imu_data.gyro_x, dt);   
+
+
+
+//---------调试----------    
+  
     
     
-    //  横滚/俯仰：串级PID (外环→内环)
-//    PID_Update(&PIDRoll, dt);           // 外环Roll PID计算
-//    PIDRateX.target = PIDRoll.out;      // 外环输出 → 内环期望
-      PID_Update(&PIDRateX, dt);          // 内环Roll PID计算
+//vz = (height - last_height) / dt;
+    
+//-------------------------pid------------
+//    //roll
+//    PID_Update(&PIDRoll, 0, eulerAngle.roll, dt);           
+//    PID_Update(&PIDRateX, PIDRoll.out, imu_data.gyro_x, dt);        
 //
-//    PID_Update(&PIDPitch, dt);          // 外环Pitch PID计算
-//    PIDRateY.target = PIDPitch.out;     // 外环输出 → 内环期望
-//    PID_Update(&PIDRateY, dt);          // 内环Pitch PID计算
+//    //pitch
+//    PID_Update(&PIDPitch, 0, eulerAngle.pitch, dt);         
+//    PID_Update(&PIDRateY, PIDPitch.out,imu_data.gyro_y, dt);          
 //
-//    //  偏航：串级PID
-//    PID_Update(&PIDYaw, dt);            // 外环Yaw PID计算
-//    PIDRateZ.target = PIDYaw.out;        // 外环输出 → 内环期望
-//    PID_Update(&PIDRateZ, dt);          // 内环Yaw PID计算
+//    //yaw
+//    PID_Update(&PIDYaw, 180, eulerAngle.pitch, dt);            
+//    PID_Update(&PIDRateZ, PIDYaw.out,imu_data.gyro_z, dt);         
+//    
+//    //height
+//    PID_Update(&PIDHeight, 1000, sensor.height, dt);            
+//    PID_Update(&PIDRateH, PIDHeight.out,imu_data.gyro_z, dt);
+    
+    
+    
     
     //  电机混控输出 
     uint16_t THR = 580;
+//    uint16_t hover_thr;//待测量
+//    THR = hover_thr + (uint16_t)PIDRateH.out;
     
     //  THR为基础油门，PID输出为修正量
-    m1 = (int16_t)THR - (int16_t)PIDRateX.out + (int16_t)PIDRateY.out + (int16_t)PIDRateZ.out; // 左前电机
-    m2 = (int16_t)THR + (int16_t)PIDRateX.out + (int16_t)PIDRateY.out - (int16_t)PIDRateZ.out; // 右前电机
-    m3 = (int16_t)THR + (int16_t)PIDRateX.out - (int16_t)PIDRateY.out + (int16_t)PIDRateZ.out; // 左后电机
-    m4 = (int16_t)THR - (int16_t)PIDRateX.out - (int16_t)PIDRateY.out - (int16_t)PIDRateZ.out; // 右后电机
+    m1 = (int16_t)THR + (int16_t)PIDRateX.out + (int16_t)PIDRateY.out - (int16_t)PIDRateZ.out; // 左前电机
+    m2 = (int16_t)THR - (int16_t)PIDRateX.out + (int16_t)PIDRateY.out + (int16_t)PIDRateZ.out; // 右前电机
+    m3 = (int16_t)THR - (int16_t)PIDRateX.out - (int16_t)PIDRateY.out - (int16_t)PIDRateZ.out; // 左后电机
+    m4 = (int16_t)THR + (int16_t)PIDRateX.out - (int16_t)PIDRateY.out + (int16_t)PIDRateZ.out; // 右后电机
     
     //  电机输出限幅
     m1 = LIMIT(m1, MOTOR_MIN_DUTY, MOTOR_MAX_DUTY);
@@ -70,6 +67,46 @@ void stabilization(float dt)
 //    motor_set(3, m3);
 //    motor_set(4, m4);
 }
+
+
+
+void Pos_control (void)
+{
+
+
+
+
+
+
+
+
+
+}
+
+
+void Height_control (void)
+{
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
 
 
 ////------------------- 电机控制 -------------------

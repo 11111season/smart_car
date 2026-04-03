@@ -65,6 +65,7 @@
     {
         // 此处编写需要循环执行的代码
         
+//    dl1b_get_distance();
 
 //        ips200_show_string( 16*0,  16*4, "pitch=:");     ips200_show_float(16*6,  16*4, imu660rc_pitch,  3,5);
 //        ips200_show_string( 16*0,  16*5, "roll=:" );     ips200_show_float(16*6,  16*5, imu660rc_roll,   3,5);
@@ -76,9 +77,10 @@
 //            motor_set(4,650);
 
       
- //         qmc5883l_get_all();
-//          camera_process();
-//          printf("%5f\r\n", qmc5883l_heading);      
+//          printf("%5f\r\n", qmc5883l_heading);  
+          printf("%d\r\n", dl1b_distance_mm);  
+
+      
       
 //-------------------printf串口打印------------      
 //        printf("111\r\n");
@@ -102,13 +104,16 @@
 //--------------------vofa------------
 //        //欧拉角
 //        printf("%5f, %5f, %5f\r\n", imu660rc_roll, imu660rc_pitch,  imu660rc_yaw);
+          
 //        // 调试：打印IMU原始数据
 //        printf("%5f, %5f, %5f\r\n", imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z);
+          
 //        // 调试：打印PID中间值
 //        printf("%5f, %5f, %5f\r\n",PIDRoll.out, PIDPitch.out, PIDYaw.out);
 //        printf("%5f, %5f, %5f\r\n",PIDRateX.out, PIDRateY.out, PIDRateZ.out);
-        //ROLL环
-        printf("%5f, %5f\r\n", PIDRateX.target,imu_data.gyro_x);//内环
+          
+         //ROLL环
+//         printf("%5f, %5f\r\n", PIDRateX.target,imu_data.gyro_x);//内环
 //        printf("%5f, %5f\r\n",PIDRoll.out,imu_data.gyro_x);//内环
 
 //        printf("%5f, %5f\r\n",PIDRoll.target,imu660rc_roll);//外环

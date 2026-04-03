@@ -1476,6 +1476,12 @@
         <file>
             <name>$PROJ_DIR$\..\..\code\QMC5883L.h</name>
         </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\TOF.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\TOF.h</name>
+        </file>
     </group>
     <group>
         <name>doc</name>

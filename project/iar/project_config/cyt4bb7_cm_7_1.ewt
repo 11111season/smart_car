@@ -1429,6 +1429,18 @@
     <group>
         <name>code</name>
         <file>
+            <name>$PROJ_DIR$\..\..\code\camera.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\camera.h</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\IPS.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\IPS.h</name>
+        </file>
+        <file>
             <name>$PROJ_DIR$\..\..\code\本文件夹作用.txt</name>
         </file>
     </group>
