@@ -109,6 +109,7 @@
 #include "control.h"
 #include "QMC5883L.h"
 #include "myuart.h"
+#include "TOF.h"
 #include "camera.h"
 
 

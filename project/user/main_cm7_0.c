@@ -55,7 +55,6 @@
      ALL_Init();
 
 
-     //try
          
 //     pmw3901_init();//光流初始化
 
@@ -84,16 +83,12 @@
 //-------------------printf串口打印------------      
 //        printf("111\r\n");
 //         // 调试：打印IMU原始数据
-//        printf("gyro_x=%f, gyro_y=%f, gyro_z=%f\r\n", 
-//               imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z);
-//        printf("roll=%f, pitch=%f, yaw=%f\r\n",
-//               eulerAngle.roll, eulerAngle.pitch, eulerAngle.yaw);
+//        printf("gyro_x=%f, gyro_y=%f, gyro_z=%f\r\n", imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z);
+//        printf("roll=%f, pitch=%f, yaw=%f\r\n",eulerAngle.roll, eulerAngle.pitch, eulerAngle.yaw);
 //        
 //        // 调试：打印PID中间值
-//        printf("Roll.out=%f, Pitch.out=%f, Yaw.out=%f\r\n",
-//               PIDRoll.out, PIDPitch.out, PIDYaw.out);
-//        printf("RateX.out=%f, RateY.out=%f, RateZ.out=%f\r\n",
-//               PIDRateX.out, PIDRateY.out, PIDRateZ.out);
+//        printf("Roll.out=%f, Pitch.out=%f, Yaw.out=%f\r\n",PIDRoll.out, PIDPitch.out, PIDYaw.out);
+//        printf("RateX.out=%f, RateY.out=%f, RateZ.out=%f\r\n",PIDRateX.out, PIDRateY.out, PIDRateZ.out);
 //        
 //        // 调试：打印最终电机值
 //        printf("m1=%d, m2=%d, m3=%d, m4=%d\r\n", m1, m2, m3, m4);
@@ -117,7 +112,9 @@
 
 //        printf("%5f, %5f\r\n",PIDRoll.target,imu660rc_roll);//外环
 
-        
+//        float integ  =1.32435;
+//        LIMIT(integ,-200,200);
+        printf("%5f\r\n",PIDRateX.integ);
         
         
 //        printf("\r\nimu660rb acc data:  x=%5f, y=%5f, z=%5f\r\n", imu660rc_roll, imu660rc_pitch,  imu660rc_yaw);

@@ -71,6 +71,7 @@ typedef struct
 	uint16_t AUX4;	
 } _remote_param_st;
 
+
 //标志位
 typedef volatile struct
 {
@@ -78,15 +79,6 @@ typedef volatile struct
 	
 
 } _flag_param_st;
-
-
-
-//sensor
-typedef struct {
-    float height;    
-    float v_z;     
-    
-} _tof_param_st;
 
 
 //世界坐标系参数
@@ -103,6 +95,18 @@ typedef struct {
 
 } _world_param_st;
 
+
+//高度
+typedef struct {
+    float height;  
+    float last_height;
+    float height_acc;
+    float vz_acc;   
+    float vz_deriv;
+    float vz_last_deriv;
+    
+    
+} _height_param_st;
 
 //----------------------extern------------------------
 //-------------struct----------
@@ -132,11 +136,12 @@ extern _remote_param_st rc;
 //flag
 extern _flag_param_st flag;
 
-//sensor
-extern _tof_param_st tof;
-
 //世界坐标系
 extern _world_param_st world_data;
+
+//高度
+extern _height_param_st alt;
+
 
 //---------------变量-----------
 

@@ -18,12 +18,8 @@ void stabilization(float dt)
 
 
 
-//---------调试----------    
   
-    
-    
-//vz = (height - last_height) / dt;
-    
+        
 //-------------------------pid------------
 //    //roll
 //    PID_Update(&PIDRoll, 0, eulerAngle.roll, dt);           
@@ -38,8 +34,8 @@ void stabilization(float dt)
 //    PID_Update(&PIDRateZ, PIDYaw.out,imu_data.gyro_z, dt);         
 //    
 //    //height
-//    PID_Update(&PIDHeight, 1000, sensor.height, dt);            
-//    PID_Update(&PIDRateH, PIDHeight.out,imu_data.gyro_z, dt);
+//    PID_Update(&PIDHeight, 1, sensor.height, dt);            
+//    PID_Update(&PIDRateH, PIDHeight.out,world_data.vz, dt);
     
     
     
@@ -61,11 +57,11 @@ void stabilization(float dt)
     m3 = LIMIT(m3, MOTOR_MIN_DUTY, MOTOR_MAX_DUTY);
     m4 = LIMIT(m4, MOTOR_MIN_DUTY, MOTOR_MAX_DUTY);
     
-//    //  电机输出
-//    motor_set(1, m1);
-//    motor_set(2, m2);
-//    motor_set(3, m3);
-//    motor_set(4, m4);
+    //  电机输出
+    motor_set(1, m1);
+    motor_set(2, m2);
+    motor_set(3, m3);
+    motor_set(4, m4);
 }
 
 

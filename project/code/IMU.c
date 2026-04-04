@@ -14,6 +14,16 @@ az_w = -sp * ax + sr*cp * ay + cr*cp * az;
       抬头投影-x，右倾投影y，Z轴本身就是主要重力方向乘 cos 是“姿态修正”
 
 */
+
+/*
+测量
+acc_z ≈ +9.8
+world_data.az ≈ +9.8
+
+如果
+world_data.az -= 9.8f;   // 如果Z轴朝上
+world_data.az += 9.8f;   // 如果Z轴朝下（NED系）
+*/
 #ifndef M_PI
 #define M_PI 3.1415926f
 #endif
@@ -38,92 +48,80 @@ void imu660rc_get_data(void)
 }
 
 
-//
-//
-//// 从 imu660rc_quarternion 构建旋转矩阵
-//// 输入: quat[4] = {qx, qy, qz, qw}
-//// 输出: R[3][3] 旋转矩阵
-////imu660rc_quarternion
-//
-//void quarternion_to_rotation_matrix(float quat[4])
-//{
-//    float qx = quat[0];
-//    float qy = quat[1];
-//    float qz = quat[2];
-//    float qw = quat[3];
-//    
-//    // 计算平方值
-//    float qx2 = qx * qx;
-//    float qy2 = qy * qy;
-//    float qz2 = qz * qz;
-//    //float qw2 = qw * qw;
-//    
-//    // 计算乘积
-//    float qx_qy = qx * qy;
-//    float qx_qz = qx * qz;
-//    float qx_qw = qx * qw;
-//    float qy_qz = qy * qz;
-//    float qy_qw = qy * qw;
-//    float qz_qw = qz * qw;
-//    
-//    // 旋转矩阵元素 (标准公式，适用于 qx,qy,qz,qw 顺序)
-//    float R11 = 1.0f - 2.0f * (qy2 + qz2);
-//    float R12 = 2.0f * (qx_qy - qz_qw);
-//    float R13 = 2.0f * (qx_qz + qy_qw);
-//    
-//    float R21 = 2.0f * (qx_qy + qz_qw);
-//    float R22 = 1.0f - 2.0f * (qx2 + qz2);
-//    float R23 = 2.0f * (qy_qz - qx_qw);
-//    
-//    float R31 = 2.0f * (qx_qz - qy_qw);
-//    float R32 = 2.0f * (qy_qz + qx_qw);
-//    float R33 = 1.0f - 2.0f * (qx2 + qy2);
-//    
-//    // 加速度转化
-//    world_data.ax = R11*imu_data.acc_x + R12*imu_data.acc_y + R13*imu_data.acc_z;
-//    world_data.ay = R21*imu_data.acc_x + R22*imu_data.acc_y + R23*imu_data.acc_z;
-//    world_data.az = R31*imu_data.acc_x + R32*imu_data.acc_y + R33*imu_data.acc_z;
-//
-//    // 去重力
-//    world_data.az -= 9.8f;
-//}
-//
-//
-//
-//
-//void body_to_world(float q[4])
-//{
-//    float q0 = q[0];
-//    float q1 = q[1];
-//    float q2 = q[2];
-//    float q3 = q[3];
-//
-//    // 旋转矩阵
-//    float R11 = 1 - 2*(q2*q2 + q3*q3);
-//    float R12 = 2*(q1*q2 - q0*q3);
-//    float R13 = 2*(q1*q3 + q0*q2);
-//
-//    float R21 = 2*(q1*q2 + q0*q3);
-//    float R22 = 1 - 2*(q1*q1 + q3*q3);
-//    float R23 = 2*(q2*q3 - q0*q1);
-//
-//    float R31 = 2*(q1*q3 - q0*q2);
-//    float R32 = 2*(q2*q3 + q0*q1);
-//    float R33 = 1 - 2*(q1*q1 + q2*q2);
-//
-//    // 加速度转化
-//    world_data.ax = R11*imu_data.acc_x + R12*imu_data.acc_y + R13*imu_data.acc_z;
-//    world_data.ay = R21*imu_data.acc_x + R22*imu_data.acc_y + R23*imu_data.acc_z;
-//    world_data.az = R31*imu_data.acc_x + R32*imu_data.acc_y + R33*imu_data.acc_z;
-//
-//    // 去重力
-//    world_data.az -= 9.8f;
-//}
-//
-//
-//
-//
-//
+/*
+高度：tof+imu积分高度
+高度速度 = IMU积分 + 高度差分
+位置：光流和速度积分
+水平速度：vx = 光流为主 + IMU辅助
+vy = 光流为主 + IMU辅助
+*/
+
+
+
+
+
+
+// 从 imu660rc_quarternion 构建旋转矩阵
+// 输入: quat[4] = {qx, qy, qz, qw}
+// 输出: R[3][3] 旋转矩阵
+//imu660rc_quarternion
+//IMU → 四元数 → 旋转矩阵 → 世界坐标
+void quarternion_to_rotation_matrix(float quat[4])
+{
+    float qx = quat[0];
+    float qy = quat[1];
+    float qz = quat[2];
+    float qw = quat[3];
+    
+    // 计算平方值
+    float qx2 = qx * qx;
+    float qy2 = qy * qy;
+    float qz2 = qz * qz;
+    float qw2 = qw * qw;
+    
+    // 计算乘积
+    float qx_qy = qx * qy;
+    float qx_qz = qx * qz;
+    float qx_qw = qx * qw;
+    float qy_qz = qy * qz;
+    float qy_qw = qy * qw;
+    float qz_qw = qz * qw;
+    
+    // 旋转矩阵元素 (标准公式，适用于 qx,qy,qz,qw 顺序)
+    float R11 = 1.0f - 2.0f * (qy2 + qz2);
+    float R12 = 2.0f * (qx_qy - qz_qw);
+    float R13 = 2.0f * (qx_qz + qy_qw);
+    
+    float R21 = 2.0f * (qx_qy + qz_qw);
+    float R22 = 1.0f - 2.0f * (qx2 + qz2);
+    float R23 = 2.0f * (qy_qz - qx_qw);
+    
+    float R31 = 2.0f * (qx_qz - qy_qw);
+    float R32 = 2.0f * (qy_qz + qx_qw);
+    float R33 = 1.0f - 2.0f * (qx2 + qy2);
+    
+    // 加速度转化
+    world_data.ax = R11*imu_data.acc_x + R12*imu_data.acc_y + R13*imu_data.acc_z;
+    world_data.ay = R21*imu_data.acc_x + R22*imu_data.acc_y + R23*imu_data.acc_z;
+    world_data.az = R31*imu_data.acc_x + R32*imu_data.acc_y + R33*imu_data.acc_z;
+
+    // 去重力
+    world_data.az -= 9.8f;
+//    if(world_data.az > 0)
+//    {
+//        world_data.az -= 9.8f;
+//    }
+//    else
+//    {
+//        world_data.az += 9.8f;
+//    }
+}
+
+
+
+
+
+////IMU → 四元数 → 欧拉角（角度） → sin/cos → 世界坐标
 //void height_data_deal(void)
 //{
 //    float last_height;
@@ -134,24 +132,7 @@ void imu660rc_get_data(void)
 //    //激光高度差分速度加滤波
 //    float vz_laser = (height - last_height) / dt;
 //    
-//    //---------加速度转换世界坐标系-----------
-//    //单精度sinf，且只算一次
-//    float cr = cosf(eulerAngle.roll * M_PI / 180.0f);//标准抬头>0
-//    float sr = sinf(eulerAngle.roll * M_PI / 180.0f);
-//    float cp = cosf(eulerAngle.pitch * M_PI / 180.0f);
-//    float sp = sinf(eulerAngle.pitch * M_PI / 180.0f);
-//    float cy = cosf(eulerAngle.yaw * M_PI / 180.0f);
-//    float sy = sinf(eulerAngle.yaw * M_PI / 180.0f);
-//    
-//    
 //
-//
-//    world_data.ax= (cp*cy)*imu_data.acc_x + (sr*sp*cy - cr*sy)*imu_data.acc_y + (cr*sp*cy + sr*sy)*imu_data.acc_z;
-//
-//    world_data.ay = (cp*sy)*imu_data.acc_x + (sr*sp*sy + cr*cy)*imu_data.acc_y + (cr*sp*sy - sr*cy)*imu_data.acc_z;
-//
-//    world_data.az = (-sp)*imu_data.acc_x + (sr*cp)*imu_data.acc_y + (cr*cp)*imu_data.acc_z;
-//    //减去重力（？只在Z轴转换吗）
 //
 //    //梯形积分得到速度
 //  
@@ -160,20 +141,15 @@ void imu660rc_get_data(void)
 ////----------融合速度，互补滤波，权重参数
 //    //融合速度：加速度积分，高度差分
 //    //融合高度：测量高度和速度积分
-//    
-//
-//
-//
-//
 //
 //
 //}
 //
 //
-//
-//
-//
-//
+
+
+
+
 //
 //
 //// 推荐做法：总是转换到世界坐标系

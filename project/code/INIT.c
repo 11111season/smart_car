@@ -10,8 +10,9 @@ _PID_param_st PIDPitch; //外环PID数据,只要P
 _PID_param_st PIDRoll;
 _PID_param_st PIDYaw;
 
-_PID_param_st PIDHeight;//外环
 _PID_param_st PIDRateH;//内环
+_PID_param_st PIDHeight;//外环
+
 
 
 
@@ -28,13 +29,11 @@ _remote_param_st rc;
 //falg
 _flag_param_st flag;
 
-//TOF
-_tof_param_st tof;
-
 //世界坐标系
 _world_param_st world_data;
 
-
+//高度
+_height_param_st alt;
 
 //---------------变量-----------
 
@@ -88,11 +87,11 @@ void ALL_Init()
 //--------------pit-------------
     pit_ms_init(PIT_CH0, 5);    //5ms
       
-    pit_ms_init(PIT_CH1, 5);    //5ms
+    pit_ms_init(PIT_CH1, 5);    
     
-    pit_ms_init(PIT_CH2, 20);    //5ms
+    pit_ms_init(PIT_CH2, 20);    
     
-    pit_ms_init(PIT_CH10, 10);    //5ms
+    pit_ms_init(PIT_CH10, 10);    
 
 
 

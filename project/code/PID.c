@@ -6,10 +6,10 @@ void PID_param_Init(void)
     //============ 内环角速度PID (需要PD控制，积分可能不需要) ============
     // Roll 内环 
     PIDRateX.kp = 0.3f; //1.2f;          
-    PIDRateX.ki = 0.0f;          
+    PIDRateX.ki = 0.5f;          
     PIDRateX.kd = 0.0f; //0.05f;         
-    PIDRateX.Integ_LimitHigh = 0;
-    PIDRateX.Integ_LimitLow = 0;
+    PIDRateX.Integ_LimitHigh = 800;
+    PIDRateX.Integ_LimitLow = -800;
     PIDRateX.Out_LimitHigh = 200; 
     PIDRateX.Out_LimitLow = -200;
     
@@ -23,7 +23,7 @@ void PID_param_Init(void)
     PIDRateY.Out_LimitLow = -400;
     
     // Yaw 内环 
-    PIDRateZ.kp = 0.0f; //1.5f;         
+    PIDRateZ.kp = 4.0f; //1.5f;         
     PIDRateZ.ki = 0.0f;
     PIDRateZ.kd = 0.0f; //0.02f;
     PIDRateZ.Integ_LimitHigh = 0;
@@ -33,7 +33,7 @@ void PID_param_Init(void)
     
     //============ 外环角度PID (只需要P控制) ============
     // Roll 外环 
-    PIDRoll.kp = 0.02f; //6.0f;           
+    PIDRoll.kp = 0.0f; //6.0f;           
     PIDRoll.ki = 0.0f;
     PIDRoll.kd = 0.0f;
     PIDRoll.Integ_LimitHigh = 0;
@@ -58,6 +58,12 @@ void PID_param_Init(void)
     PIDYaw.Integ_LimitLow = -50;
     PIDYaw.Out_LimitHigh = 200;
     PIDYaw.Out_LimitLow = -200;
+    
+    //============ 外环角度PID (只需要P控制) ============
+    
+    
+    
+
 }
 
 
@@ -88,14 +94,14 @@ void PID_Rest(_PID_param_st **pid, const uint8_t len)
 //-------------PID计算-------------
 void PID_Update(_PID_param_st* pid, float target, float measured, const float dt)
 {
-    float temp_output;
+//    float temp_output;
     
     if(dt <= 0) return;
     
     //传参
     pid->target=target;
     pid->measured=measured;
-    
+    pid->measured=10;
     //当前角度与实际角度的误差
     pid->error = pid->target - pid->measured; 
     
@@ -107,13 +113,13 @@ void PID_Update(_PID_param_st* pid, float target, float measured, const float dt
     pid->last_deriv = pid->deriv;
     
     // 预测输出
-    temp_output = pid->kp * pid->error + pid->ki * pid->integ + pid->kd * pid->deriv;  
+//    temp_output = pid->kp * pid->error + pid->ki * pid->integ + pid->kd * pid->deriv;  
     
-    // 抗积分饱和 
-    if(temp_output < pid->Out_LimitHigh && temp_output > pid->Out_LimitLow)
-    {
+//    // 抗积分饱和 
+//    if(temp_output < pid->Out_LimitHigh && temp_output > pid->Out_LimitLow)
+//    {
         pid->integ += pid->error * dt;
-    }
+//    }
     
     // 积分限幅 
     pid->integ = LIMIT(pid->integ, pid->Integ_LimitLow, pid->Integ_LimitHigh);
