@@ -8,10 +8,7 @@
 */
 //------------------- 自稳-------------------
 void stabilization(float dt)
-{
-//    if(!flag.unlock) return; // 未解锁直接返回
-  
-
+{  
     
 //---------调试------------
     PID_Update(&PIDRateX, 0, imu_data.gyro_x, dt);   
@@ -36,7 +33,6 @@ void stabilization(float dt)
 //    //height
 //    PID_Update(&PIDHeight, 1, sensor.height, dt);            
 //    PID_Update(&PIDRateH, PIDHeight.out,world_data.vz, dt);
-    
     
     
     

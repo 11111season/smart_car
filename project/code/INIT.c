@@ -41,6 +41,7 @@ _of_param_st of ;
 ////滤波
 //PT1Filter_t filter;
 
+
 //---------------变量-----------
 
 //电机变量
@@ -48,8 +49,6 @@ uint16_t m1 = 0, m2 = 0, m3 = 0, m4 = 0;
 
 //结构体数组，将每一个数组放一个pid结构体，这样就可以批量操作各个PID的数据了  比如解锁时批量复位pid控制数据，新手明白这句话的作用就可以了
 _PID_param_st *(pPidObject[])={&PIDRateX,&PIDRateY,&PIDRateZ,&PIDRoll,&PIDPitch,&PIDYaw};
-
-//传感器变量
 
 //串口数据
 float buff_value;
@@ -88,6 +87,7 @@ void ALL_Init()
     
     //滤波
     PT1Filter_InitWithFreq(&filter_height,100,100);
+    PT1Filter_InitWithFreq(&filter_height_vz,100,100);//未调
     PT1Filter_InitWithFreq(&filter_pwm3901_vx,10,40);
     PT1Filter_InitWithFreq(&filter_pwm3901_vy,10,40);
 

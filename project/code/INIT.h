@@ -103,6 +103,7 @@ typedef struct {
     float height_acc;
     float vz_acc;   
     float vz_deriv;
+    float vz_deriv1;//激光差分速度滤波
     float vz_last_deriv;
     
     

@@ -12,5 +12,6 @@
 //
 
 void OF_data_deal(float dt);
+void velocity_mahony_fusion(float dt);
 
 #endif 

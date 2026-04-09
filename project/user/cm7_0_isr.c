@@ -90,8 +90,11 @@ void pit0_ch11_isr()                    // 定时器通道 11 周期中断服务函数
 {
     pit_isr_flag_clear(PIT_CH11);
     
-    //    pmw3901_get_motion();
-    OF_data_deal(20);
+    pmw3901_get_motion();
+    OF_data_deal(0.025);
+    
+    velocity_mahony_fusion(0.025);
+    printf("%f\r\n",world_data.vx);
 }
 
 void pit0_ch12_isr()                    // 定时器通道 12 周期中断服务函数      

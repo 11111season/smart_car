@@ -60,7 +60,7 @@ int main(void)
     {
         // 此处编写需要循环执行的代码
 
-       pmw3901_get_motion();
+//       pmw3901_get_motion();
 //          printf("%5f\r\n", qmc5883l_heading);  
 //          printf("%d\r\n", dl1b_distance_mm);  
             
@@ -82,6 +82,8 @@ int main(void)
 //--------------------vofa------------
 //        //欧拉角
 //        printf("%5f, %5f, %5f\r\n", imu660rc_roll, imu660rc_pitch,  imu660rc_yaw);
+//        printf("%d, %d, %d\r\n", imu660rc_acc_x, imu660rc_acc_y,  imu660rc_acc_z);
+
 //        printf("\r\nimu660rb acc data:  x=%5f, y=%5f, z=%5f\r\n", imu660rc_roll, imu660rc_pitch,  imu660rc_yaw);
 
 //        // 调试：打印IMU原始数据
@@ -102,22 +104,26 @@ int main(void)
 //          printf("%f, %f,%d,%d\r\n",-pmw3901_delta_x/0.02,-pmw3901_delta_y/0.02,imu660rc_gyro_x,imu660rc_gyro_y);//外环
 //          printf("%d,%d\r\n",pmw3901_delta_x,pmw3901_delta_y);
 
-          printf("%f, %f,%f,%f,%d\n",of.vx,of.vy,of.vx1,of.vy1,dl1b_distance_mm);//外环
+//          printf("%f, %f,%f,%f,%d\n",of.vx,of.vy,of.vx1,of.vy1,dl1b_distance_mm);//外环
+//           printf("%5f, %5f,%5f,%5f,%5f\r\n",imu_data.acc_x ,imu_data.acc_y,world_data.ax,world_data.ay,world_data.az);//外环
+//           printf("%5f, %5f,%5f,%5f\r\n",imu660rc_quarternion[0] ,imu660rc_quarternion[1],imu660rc_quarternion[2],imu660rc_quarternion[3]);//外环
 
         
         
-        
-        
+//    world_data.ax = R11*imu_data.acc_x + R21*imu_data.acc_y + R31*imu_data.acc_z;
+//    world_data.ay = R12*imu_data.acc_x + R22*imu_data.acc_y + R32*imu_data.acc_z;
+//    world_data.az = R13*imu_data.acc_x + R23*imu_data.acc_y + R33*imu_data.acc_z;
+//        
         
 ////--------------------IPS----------
-//        ips200_show_string( 16*0,  16*4, "roll=:");     ips200_show_float(16*6,  16*4, eulerAngle.roll,  3,5);
-//        ips200_show_string( 16*0,  16*5, "pitch=:" );     ips200_show_float(16*6,  16*5, eulerAngle.pitch,   3,5);
-//        ips200_show_string( 16*0,  16*6, "yaw=:"  );     ips200_show_float(16*6,  16*6, eulerAngle.yaw, 3,5);
-//        
-//        ips200_show_string( 16*0,  16*7, "m1=:");     ips200_show_float(16*6,  16*7, m1, 3,5);
-//        ips200_show_string( 16*0,  16*8, "m2=:");     ips200_show_float(16*6,  16*8, m2, 3,5);
-//        ips200_show_string( 16*0,  16*9, "m3=:");     ips200_show_float(16*6,  16*9, m3, 3,5);
-//        ips200_show_string( 16*0,  16*10, "m4=:");    ips200_show_float(16*6,  16*10, m4, 3,5);
+        ips200_show_string( 16*0,  16*4, "roll=:");     ips200_show_float(16*6,  16*4, eulerAngle.roll,  3,5);
+        ips200_show_string( 16*0,  16*5, "pitch=:" );     ips200_show_float(16*6,  16*5, eulerAngle.pitch,   3,5);
+        ips200_show_string( 16*0,  16*6, "yaw=:"  );     ips200_show_float(16*6,  16*6, eulerAngle.yaw, 3,5);
+        
+        ips200_show_string( 16*0,  16*7, "m1=:");     ips200_show_float(16*6,  16*7, m1, 3,5);
+        ips200_show_string( 16*0,  16*8, "m2=:");     ips200_show_float(16*6,  16*8, m2, 3,5);
+        ips200_show_string( 16*0,  16*9, "m3=:");     ips200_show_float(16*6,  16*9, m3, 3,5);
+        ips200_show_string( 16*0,  16*10, "m4=:");    ips200_show_float(16*6,  16*10, m4, 3,5);
 //        ips200_show_string( 16*0,  16*11, "test=:");    ips200_show_float(16*6,  16*11, buff_value, 3,5);
 
         

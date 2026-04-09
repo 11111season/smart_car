@@ -244,7 +244,7 @@ static void quarternion_to_euler(float quat[4], float *roll, float *pitch, float
     
     *roll   = euler[0];
     *pitch  = euler[1];
-    *yaw    = euler[2];
+    *yaw    = -euler[2]+360;
 }
 
 //-------------------------------------------------------------------------------------------------------------------
@@ -375,7 +375,7 @@ void imu660rc_get_quarternion(void)
             imu660rc_read_registers(IMU660RC_OUTX_L_G, (uint8 *)buff2_ptr, 6);
             imu660rc_gyro_x = buff2_ptr[0];
             imu660rc_gyro_y = buff2_ptr[1];
-            imu660rc_gyro_z = buff2_ptr[2];
+            imu660rc_gyro_z = -buff2_ptr[2];
         }
         #endif
     }

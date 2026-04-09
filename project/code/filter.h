@@ -45,6 +45,7 @@ float KalmanFilter_Update(KalmanFilter *kf, float measurement);
 
 //滤波
 extern PT1Filter_t filter_height;
+extern PT1Filter_t filter_height_vz;
 extern PT1Filter_t filter_pwm3901_vx;
 extern PT1Filter_t filter_pwm3901_vy;
 
