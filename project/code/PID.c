@@ -5,35 +5,35 @@ void PID_param_Init(void)
 {
     //============ 内环角速度PID (需要PD控制，积分可能不需要) ============
     // Roll 内环 
-    PIDRateX.kp = 2.86f; //1.2f;          
-    PIDRateX.ki = 4.95f;          
-    PIDRateX.kd = 0.14f; //0.05f;         
-    PIDRateX.Integ_LimitHigh = 800;
-    PIDRateX.Integ_LimitLow = -800;
-    PIDRateX.Out_LimitHigh = 200; 
-    PIDRateX.Out_LimitLow = -200;
-    
+    PIDVelX.kp = 1.0047f; //1.2f;          
+    PIDVelX.ki = 2.8163f;          
+    PIDVelX.kd = 0.001f; //0.05f;         
+    PIDVelX.Integ_LimitHigh = 800;
+    PIDVelX.Integ_LimitLow = -800;
+    PIDVelX.Out_LimitHigh = 200; 
+    PIDVelX.Out_LimitLow = -200;
+       
     // Pitch 内环 
-    PIDRateY.kp = 0.0f; //1.2f;
-    PIDRateY.ki = 0.0f;
-    PIDRateY.kd = 0.0f; //0.05f;
-    PIDRateY.Integ_LimitHigh = 0;
-    PIDRateY.Integ_LimitLow = 0;
-    PIDRateY.Out_LimitHigh = 400;
-    PIDRateY.Out_LimitLow = -400;
+    PIDVelY.kp = 0.0f; //1.2f;
+    PIDVelY.ki = 0.0f;
+    PIDVelY.kd = 0.0f; //0.05f;
+    PIDVelY.Integ_LimitHigh = 0;
+    PIDVelY.Integ_LimitLow = 0;
+    PIDVelY.Out_LimitHigh = 400;
+    PIDVelY.Out_LimitLow = -400;
     
     // Yaw 内环 
-    PIDRateZ.kp = 4.0f; //1.5f;         
-    PIDRateZ.ki = 0.0f;
-    PIDRateZ.kd = 0.0f; //0.02f;
-    PIDRateZ.Integ_LimitHigh = 0;
-    PIDRateZ.Integ_LimitLow = 0;
-    PIDRateZ.Out_LimitHigh = 400;
-    PIDRateZ.Out_LimitLow = -400;
+    PIDVelZ.kp = 4.0f; //1.5f;         
+    PIDVelZ.ki = 0.0f;
+    PIDVelZ.kd = 0.0f; //0.02f;
+    PIDVelZ.Integ_LimitHigh = 0;
+    PIDVelZ.Integ_LimitLow = 0;
+    PIDVelZ.Out_LimitHigh = 400;
+    PIDVelZ.Out_LimitLow = -400;
     
     //============ 外环角度PID (只需要P控制) ============
     // Roll 外环 
-    PIDRoll.kp = 0.0f; //6.0f;           
+    PIDRoll.kp = 1.0f; //6.0f;           
     PIDRoll.ki = 0.0f;
     PIDRoll.kd = 0.0f;
     PIDRoll.Integ_LimitHigh = 0;

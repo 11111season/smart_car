@@ -79,7 +79,7 @@ void pit0_ch10_isr()                    // 定时器通道 10 周期中断服务函数
         fifo_read_buffer(&uart_data_fifo, fifo_get_data, &fifo_data_count, FIFO_READ_AND_CLEAN);    // 将 fifo 中数据读出并清空 fifo 挂载的缓冲
      
         buff_value = atof((char*)fifo_get_data);
-        printf("收到 float = %.5f\r\n", buff_value);
+//        printf("收到 float = %.5f\r\n", buff_value);
 //       uart_write_string(UART_INDEX, "\r\nUART get data:");                // 输出测试信息
 //       uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // 将读取到的数据发送出去
   }
@@ -94,7 +94,7 @@ void pit0_ch11_isr()                    // 定时器通道 11 周期中断服务函数
     OF_data_deal(0.025);
     
     velocity_mahony_fusion(0.025);
-    printf("%f\r\n",world_data.vx);
+//    printf("%f\r\n",world_data.vx);
 }
 
 void pit0_ch12_isr()                    // 定时器通道 12 周期中断服务函数      
@@ -169,7 +169,8 @@ void uart0_isr (void)
 //#if DEBUG_UART_USE_INTERRUPT             // 如果开启 debug 串口中断
 //        debug_interrupr_handler();       // 调用 debug 串口接收处理函数 数据会被 debug 环形缓冲区读取
 //#endif                                   // 如果修改了 DEBUG_UART_INDEX 那这段代码需要放到对应的串口中断去
-      
+       uart_rx_interrupt_handler();
+
     }
     else                                 // 串口0发送中断
     {           

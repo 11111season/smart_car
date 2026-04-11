@@ -18,27 +18,55 @@ world_data.pz = alt.height;
 
 */
 
+void TOF_init(void)
+{
+    //模块初始化
+    dl1b_init();
+    
+    //参数初始化
+    alt.height = 0;
+    alt.last_height = 0;
+
+    alt.vz_deriv = 0;
+    alt.vz_deriv1 = 0;
+
+    alt.vz_acc = 0;
+    world_data.vz = 0;
+}
+
+  
+ 
 void height_data_deal(float dt)
 {
     //获取高度数据滤波,并直接赋值给高度，激光比较准
     alt.height = PT1Filter_Apply(&filter_height,dl1b_distance_mm)/1000.0f; 
     world_data.pz = alt.height;
     
-    //激光高度差分速度+低通滤波（未调）
+    // 初始化防炸
+    if(!flag.height_init)
+    {
+        alt.last_height = alt.height;
+        flag.height_init = 1;
+    }
+    
+    //激光高度差分速度+低通滤波（初步已经调试）
     alt.vz_deriv = (alt.height - alt.last_height) / dt;
+//    alt.vz_deriv = LIMIT(alt.vz_deriv, -3.0f, 3.0f);//限幅待测量+使用
+    
     alt.vz_deriv1 = PT1Filter_Apply(&filter_height_vz,alt.vz_deriv);
     alt.last_height = alt.height;
        
     //积分得到速度
-    alt.vz_acc += world_data.az * dt;               
+    alt.vz_acc += world_data.az * dt;       
+    alt.vz_acc *=  0.98f ;                    // 防漂 VEL_DECAY= 0.98f,融合后衰减，会影响激光权重
 
     //互补滤波,alpha未测
     //速度在漂imu大了，速度很抖激光大了，vz太抖imu权重加
-    float alpha_height_vz = 0.98;
-    world_data.vz =  alpha_height_vz *  alt.vz_acc + (1.0f -  alpha_height_vz) * alt.vz_deriv;     
+    float alpha_height_vz = 0.90;
+    world_data.vz =  alpha_height_vz *  alt.vz_acc + (1.0f -  alpha_height_vz) * alt.vz_deriv1;     
     
-    // 防漂移（泄露）
-    world_data.vz *=  0.98f ;                    // 防漂 VEL_DECAY= 0.98f   
+//    // 防漂移（泄露）
+//    world_data.vz *=  0.98f ;                    // 防漂 VEL_DECAY= 0.98f   
        
 }
 

@@ -11,28 +11,28 @@ void stabilization(float dt)
 {  
     
 //---------调试------------
-    PID_Update(&PIDRateX, 0, imu_data.gyro_x, dt);   
+    PID_Update(&PIDVelX, 0, imu_data.gyro_x, dt);   
 
 
 
   
         
 //-------------------------pid------------
-//    //roll
-//    PID_Update(&PIDRoll, 0, eulerAngle.roll, dt);           
-//    PID_Update(&PIDRateX, PIDRoll.out, imu_data.gyro_x, dt);        
-//
-//    //pitch
-//    PID_Update(&PIDPitch, 0, eulerAngle.pitch, dt);         
-//    PID_Update(&PIDRateY, PIDPitch.out,imu_data.gyro_y, dt);          
-//
-//    //yaw
-//    PID_Update(&PIDYaw, 180, eulerAngle.pitch, dt);            
-//    PID_Update(&PIDRateZ, PIDYaw.out,imu_data.gyro_z, dt);         
-//    
-//    //height
-//    PID_Update(&PIDHeight, 1, sensor.height, dt);            
-//    PID_Update(&PIDRateH, PIDHeight.out,world_data.vz, dt);
+    //roll
+    PID_Update(&PIDRoll, PIDRoll.target, eulerAngle.roll, dt);           
+    PID_Update(&PIDVelX, PIDRoll.out, imu_data.gyro_x, dt);        
+
+    //pitch
+    PID_Update(&PIDPitch, PIDPitch.target, eulerAngle.pitch, dt);         
+    PID_Update(&PIDVelY, PIDPitch.out, imu_data.gyro_y, dt);          
+
+    //yaw
+    PID_Update(&PIDYaw, PIDYaw.target, eulerAngle.yaw, dt);            
+    PID_Update(&PIDVelZ, PIDYaw.out, imu_data.gyro_z, dt);         
+    
+    //height
+    PID_Update(&PIDHeight, PIDHeight.target, world_data.pz, dt);            
+    PID_Update(&PIDVelH, PIDHeight.out, world_data.vz, dt);
     
     
     
@@ -42,10 +42,10 @@ void stabilization(float dt)
 //    THR = hover_thr + (uint16_t)PIDRateH.out;
     
     //  THR为基础油门，PID输出为修正量
-    m1 = (int16_t)THR + (int16_t)PIDRateX.out + (int16_t)PIDRateY.out - (int16_t)PIDRateZ.out; // 左前电机
-    m2 = (int16_t)THR - (int16_t)PIDRateX.out + (int16_t)PIDRateY.out + (int16_t)PIDRateZ.out; // 右前电机
-    m3 = (int16_t)THR - (int16_t)PIDRateX.out - (int16_t)PIDRateY.out - (int16_t)PIDRateZ.out; // 左后电机
-    m4 = (int16_t)THR + (int16_t)PIDRateX.out - (int16_t)PIDRateY.out + (int16_t)PIDRateZ.out; // 右后电机
+    m1 = (int16_t)THR + (int16_t)PIDVelX.out + (int16_t)PIDVelY.out - (int16_t)PIDVelZ.out; // 左前电机
+    m2 = (int16_t)THR - (int16_t)PIDVelX.out + (int16_t)PIDVelY.out + (int16_t)PIDVelZ.out; // 右前电机
+    m3 = (int16_t)THR - (int16_t)PIDVelX.out - (int16_t)PIDVelY.out - (int16_t)PIDVelZ.out; // 左后电机
+    m4 = (int16_t)THR + (int16_t)PIDVelX.out - (int16_t)PIDVelY.out + (int16_t)PIDVelZ.out; // 右后电机
     
     //  电机输出限幅
     m1 = LIMIT(m1, MOTOR_MIN_DUTY, MOTOR_MAX_DUTY);
@@ -60,17 +60,48 @@ void stabilization(float dt)
     motor_set(4, m4);
 }
 
+//高度
+float height_control(float dt)
+{
+    // 外环：目标高度 -> 目标垂直速度
+    PID_Update(&PIDHeight, 1, world_data.pz, dt);
+    
+    // 内环：目标垂直速度 -> 油门修正量
+    PID_Update(&PIDVelH, PIDHeight.out, world_data.vz, dt);
+    
+    // 返回修正量供混控使用
+    return PIDVelH.out;
+}
+
+//位置
+void position_control(float dt)
+{
+    // 光流获取世界坐标速度
+    float vx_world = world_data.vx;  // X方向世界速度
+    float vy_world = world_data.vy;  // Y方向世界速度
+    
+    // 外环：目标位置 -> 目标速度
+    PID_Update(&PIDPosX, PIDPosX.target, world_data.px, dt);
+    PID_Update(&PIDPosY, PIDPosX.target, world_data.py, dt);
+    
+    // 内环：目标速度 -> 姿态修正量
+    PID_Update(&PIDVelX, PIDPosX.out, vx_world, dt);  // 输出给 Roll
+    PID_Update(&PIDVelY, PIDPosY.out, vy_world, dt);  // 输出给 Pitch
+    
+    // 输出姿态目标
+    PIDRoll.target  = PIDVelX.out;
+    PIDPitch.target = PIDVelY.out;
+}
 
 
+void flight_control(float dt)
+{
+    position_control(dt);
 
+//    THR = hover_thr + height_control(dt);
 
-
-
-
-
-
-
-
+    stabilization(dt);
+}
 
 
 

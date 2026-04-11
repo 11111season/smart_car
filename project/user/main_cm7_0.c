@@ -59,35 +59,24 @@ int main(void)
     while(true)
     {
         // 此处编写需要循环执行的代码
+        
+//         PIDVelY.kp=buff_value;
+//          printf("2e=%5f\r\n", PIDVelY.kp);  
 
-//       pmw3901_get_motion();
+      
+      
+      
+//          pmw3901_get_motion();
 //          printf("%5f\r\n", qmc5883l_heading);  
 //          printf("%d\r\n", dl1b_distance_mm);  
             
-//-------------------printf串口打印------------      
-//        printf("111\r\n");
-//         // 调试：打印IMU原始数据
-//        printf("gyro_x=%f, gyro_y=%f, gyro_z=%f\r\n", imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z);
-//        printf("roll=%f, pitch=%f, yaw=%f\r\n",eulerAngle.roll, eulerAngle.pitch, eulerAngle.yaw);
-//        
-//        // 调试：打印PID中间值
-//        printf("Roll.out=%f, Pitch.out=%f, Yaw.out=%f\r\n",PIDRoll.out, PIDPitch.out, PIDYaw.out);
-//        printf("RateX.out=%f, RateY.out=%f, RateZ.out=%f\r\n",PIDRateX.out, PIDRateY.out, PIDRateZ.out);
-//        
-//        // 调试：打印最终电机值
-//        printf("m1=%d, m2=%d, m3=%d, m4=%d\r\n", m1, m2, m3, m4);
-      
-      
       
 //--------------------vofa------------
-//        //欧拉角
+//        //imu
 //        printf("%5f, %5f, %5f\r\n", imu660rc_roll, imu660rc_pitch,  imu660rc_yaw);
 //        printf("%d, %d, %d\r\n", imu660rc_acc_x, imu660rc_acc_y,  imu660rc_acc_z);
-
-//        printf("\r\nimu660rb acc data:  x=%5f, y=%5f, z=%5f\r\n", imu660rc_roll, imu660rc_pitch,  imu660rc_yaw);
-
-//        // 调试：打印IMU原始数据
 //        printf("%5f, %5f, %5f\r\n", imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z);
+
           
 //        // 调试：打印PID中间值
 //        printf("%5f, %5f, %5f\r\n",PIDRoll.out, PIDPitch.out, PIDYaw.out);
@@ -110,10 +99,11 @@ int main(void)
 
         
         
-//    world_data.ax = R11*imu_data.acc_x + R21*imu_data.acc_y + R31*imu_data.acc_z;
-//    world_data.ay = R12*imu_data.acc_x + R22*imu_data.acc_y + R32*imu_data.acc_z;
-//    world_data.az = R13*imu_data.acc_x + R23*imu_data.acc_y + R33*imu_data.acc_z;
-//        
+        
+//        printf("%5f, %5f\r\n",alt.vz_deriv,alt.vz_deriv1);
+        printf("%5f, %5f, %5f\r\n",alt.vz_acc,alt.vz_deriv1,world_data.vz);
+
+           
         
 ////--------------------IPS----------
         ips200_show_string( 16*0,  16*4, "roll=:");     ips200_show_float(16*6,  16*4, eulerAngle.roll,  3,5);

@@ -75,10 +75,12 @@ typedef struct
 //标志位
 typedef volatile struct
 {
-        uint8_t unlock;
+    uint8_t unlock;
+    uint8_t height_init;
+    uint8_t of_init;
 	
 
-} _flag_param_st;
+} _flag_param_st;//记得上电全给0
 
 
 //世界坐标系参数
@@ -132,16 +134,22 @@ typedef struct {
 //----------------------extern------------------------
 //-------------struct----------
 //PID
-extern _PID_param_st PIDRateX; //内环PID数据,PID都要
-extern _PID_param_st PIDRateY;
-extern _PID_param_st PIDRateZ;
+extern _PID_param_st PIDVelX; //内环PID数据,PID都要
+extern _PID_param_st PIDVelY;
+extern _PID_param_st PIDVelZ;
 
 extern _PID_param_st PIDPitch; //外环PID数据,只要P
 extern _PID_param_st PIDRoll;
 extern _PID_param_st PIDYaw;
 
-extern _PID_param_st PIDHeight;//外环
-extern _PID_param_st PIDRateH;//内环
+extern _PID_param_st PIDHeight;//高度外环
+extern _PID_param_st PIDVelH;//高度内环
+
+extern _PID_param_st PIDPosX;//位置外环
+extern _PID_param_st PIDPosY;
+
+extern _PID_param_st PIDVelX;//位置内环
+extern _PID_param_st PIDVelY;
 
 // 外部声明指针数组（在 control.c 中定义）
 extern _PID_param_st *(pPidObject[]);

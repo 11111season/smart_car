@@ -39,6 +39,36 @@ pos_x += vx * dt;
 
 */
 
+void OF_init(void)
+{
+    pmw3901_init();
+    //参数初始化
+    world_data.vx = 0;
+    world_data.vy = 0;
+
+    world_data.px = 0;
+    world_data.py = 0;
+    
+    of.vx = 0;
+    of.vy = 0;
+    of.vx1 = 0;
+    of.vy1 = 0;
+
+    of.dx = 0;
+    of.dy = 0;
+    of.dx_i = 0;
+    of.dy_i = 0;
+    
+    if(!flag.of_init)
+{
+    world_data.vx = of.vx1;
+    world_data.vy = of.vy1;
+
+    flag.of_init = 1;
+    return;
+}
+
+}
 
 //先测K,再测scale
 void OF_data_deal(float dt)

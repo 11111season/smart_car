@@ -10,7 +10,7 @@
 //#define K               0       // 20ms 采样周期
 //
 //
-
+void OF_init(void);
 void OF_data_deal(float dt);
 void velocity_mahony_fusion(float dt);
 
