@@ -16,7 +16,7 @@
 //函数声明
 void motor_init(void);
 void motor_set(uint8 motor_num , uint16 speed);
-
+void motor_set_all(uint16 m1, uint16 m2, uint16 m3, uint16 m4);
 
 
 //函数

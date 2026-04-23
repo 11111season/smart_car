@@ -68,7 +68,7 @@ void PID_param_Init(void)
 
 
 //-------------PID数据复位-------------
-void PID_Rest(_PID_param_st **pid, const uint8_t len)
+void PID_Rest_Init(_PID_param_st **pid, const uint8_t len)
 {
     uint8_t i;
     for(i = 0; i < len; i++)
@@ -87,6 +87,24 @@ void PID_Rest(_PID_param_st **pid, const uint8_t len)
         
         pid[i]->integ = 0;
         pid[i]->out = 0;
+    }
+}
+
+void PID_Rest_Change(_PID_param_st **pid, const uint8_t len)
+{
+    uint8_t i;
+    for(i = 0; i < len; i++)
+    {        
+        pid[i]->error = 0;
+        pid[i]->last_error = 0;
+        pid[i]->integ = 0;
+        pid[i]->out = 0;
+        
+//        pid[i]->measured = 0;
+//        pid[i]->last_measured = 0;
+//        
+//        pid[i]->deriv = 0;
+//        pid[i]->last_deriv = 0;
     }
 }
 

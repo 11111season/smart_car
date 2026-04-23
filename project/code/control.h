@@ -94,9 +94,17 @@
 
 //----------函数------------
 
+void flight_control(float dt);
 void stabilization(float dt);      // 串级PID姿态控制
-void MotorControl(void);           // 电机控制状态机
-void remote_unlock(void);           // 遥控器解锁逻辑
+
+//float height_control(float dt);
+void position_control(float dt);
+
+void hover_lock(void);
+void hover_control(float dt);
+
+void take_off(float dt);
+void land(float dt);
 
 
 #endif 

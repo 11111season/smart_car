@@ -56,6 +56,8 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
     
     //磁力计
     qmc5883l_get_all();
+    Mahony_Mag_Update();
+
 }
 
 void pit0_ch2_isr()                     // 定时器通道 2 周期中断服务函数      

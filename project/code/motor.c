@@ -27,28 +27,14 @@ void motor_set(uint8 motor_num , uint16 speed)
 
 
 
-
-
-
-
-  
-    
-    
-    
-    
-    
-
-
-
-//
-////四轴同控制
-//void motor_all_set(uint16 m1, uint16 m2, uint16 m3, uint16 m4)
-//{
-//    motor_set(1, m1);
-//    motor_set(2, m2);
-//    motor_set(3, m3);
-//    motor_set(4, m4);
-//}
+//四轴同控制
+void motor_set_all(uint16 m1, uint16 m2, uint16 m3, uint16 m4)
+{
+    motor_set(1, m1);
+    motor_set(2, m2);
+    motor_set(3, m3);
+    motor_set(4, m4);
+}
 
     
     

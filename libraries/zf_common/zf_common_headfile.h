@@ -102,10 +102,10 @@
 #include "zf_device_wireless_uart.h"
 //===================================================外接设备驱动层===================================================
 
+#include "INIT.h"
 #include "IPS.h"
 #include "IMU.h"
 #include "motor.h"
-#include "INIT.h"
 #include "PID.h"
 #include "control.h"
 #include "QMC5883L.h"

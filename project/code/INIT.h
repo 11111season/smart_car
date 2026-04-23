@@ -2,18 +2,18 @@
 #define CODE_INIT_H_
 
 
-
-//-----宏定义----
-#undef DISABLE 
-#define DISABLE 0
-#undef ENABLE 
-#define ENABLE 1
-#undef REST
-#define REST 0
-#undef SET 
-#define SET 1 
-#undef EMERGENT
-#define EMERGENT 0
+//
+////-----宏定义----
+//#undef DISABLE 
+//#define DISABLE 0
+//#undef ENABLE 
+//#define ENABLE 1
+//#undef REST
+//#define REST 0
+//#undef SET 
+//#define SET 1 
+//#undef EMERGENT
+//#define EMERGENT 0
 
 
 //----------------------struct------------------------
@@ -78,6 +78,10 @@ typedef volatile struct
     uint8_t unlock;
     uint8_t height_init;
     uint8_t of_init;
+    uint8_t online;
+    uint8_t pos_lock;
+    uint8_t hover_lock;
+    uint8_t take_off_yaw;
 	
 
 } _flag_param_st;//记得上电全给0
@@ -131,6 +135,28 @@ typedef struct {
     
 } _of_param_st;
 
+//枚举状态
+typedef enum{
+    STATE_LOCK,
+    STATE_IDLE,
+    STATE_TAKEOFF,
+    STATE_HOVER,
+    STATE_TASK,
+    STATE_LAND,
+    STATE_EMERGENCY
+      
+} flight_state_e;
+
+
+//磁力计校准
+typedef struct {
+    float offset[3];        // 硬铁偏移 (bias)
+    float scale[3][3];      // 软铁校正矩阵 (3x3)
+} MagCalibration_t;
+
+
+
+
 //----------------------extern------------------------
 //-------------struct----------
 //PID
@@ -148,8 +174,8 @@ extern _PID_param_st PIDVelH;//高度内环
 extern _PID_param_st PIDPosX;//位置外环
 extern _PID_param_st PIDPosY;
 
-extern _PID_param_st PIDVelX;//位置内环
-extern _PID_param_st PIDVelY;
+extern _PID_param_st PIDPosX_Vel;//位置内环
+extern _PID_param_st PIDPosY_Vel;
 
 // 外部声明指针数组（在 control.c 中定义）
 extern _PID_param_st *(pPidObject[]);
@@ -174,8 +200,18 @@ extern _height_param_st alt;
 //光流
 extern _of_param_st of ; 
 
-////滤波
-// extern PT1Filter_t filter;
+//磁力计
+extern  MagCalibration_t mag_cal;
+
+//----------enum--------
+extern flight_state_e state ;
+
+
+
+
+
+
+
 //---------------变量-----------
 
 //电机变量
@@ -185,6 +221,12 @@ extern uint16_t m3;
 extern uint16_t m4;
 
 extern float buff_value;
+
+//磁力计校准参数
+extern float offset[3];
+extern float scale[3][3];
+
+
 
 
 void ALL_Init(void);//全部初始化

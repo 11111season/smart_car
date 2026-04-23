@@ -1,6 +1,6 @@
 #include "zf_common_headfile.h"
 
-//-------------struct----------
+//------------------------------------struct----------------------------
 //pid
 _PID_param_st PIDVelX; //内环PID数据,PID都要
 _PID_param_st PIDVelY;
@@ -16,8 +16,8 @@ _PID_param_st PIDVelH;//内环
 _PID_param_st PIDPosX;//位置外环
 _PID_param_st PIDPosY;
 
-_PID_param_st PIDVelX;//位置内环
-_PID_param_st PIDVelY;
+_PID_param_st PIDPosX_Vel;//位置内环
+_PID_param_st PIDPosY_Vel;
 
 
 //imu
@@ -40,22 +40,49 @@ _height_param_st alt;
 //光流
 _of_param_st of ;
 
+//磁力计
+MagCalibration_t mag_cal = {
+    .offset = {0.0f, 0.0f, 0.0f},
+    .scale  = {
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f}
+    }
+};
 
 
-//---------------变量-----------
 
+//-------------------------------------enum------------------------
+flight_state_e state ;
+
+
+//-------------------------------------变量-----------------------
 //电机变量
 uint16_t m1 = 0, m2 = 0, m3 = 0, m4 = 0;
 
 //结构体数组，将每一个数组放一个pid结构体，这样就可以批量操作各个PID的数据了  比如解锁时批量复位pid控制数据，新手明白这句话的作用就可以了
-_PID_param_st *(pPidObject[])={&PIDVelX,&PIDVelY,&PIDVelZ,&PIDRoll,&PIDPitch,&PIDYaw};
+_PID_param_st *(pPidObject[])={
+    &PIDRoll, &PIDPitch, &PIDYaw,
+    &PIDVelX, &PIDVelY, &PIDVelZ,
+    &PIDHeight, &PIDVelH,
+    &PIDPosX, &PIDPosY,
+    &PIDPosX_Vel, &PIDPosY_Vel
+};
 
 //串口数据
 float buff_value;
 
+//磁力计校准参数
+float offset[3] = {
+    -0.036896f, 0.048859f, 0.368527f};  
+    
+float scale[3][3] = {
+    {1.024622f, 0.079763f, 0.060309f},
+    {0.079763f, 1.006517f, 0.076973f},
+    {0.060309f, 0.076973f, 0.984442f}
+};
 
-
-//----------------函数----------------------
+//-------------------------------------函数-------------------------------
 void ALL_Init()
 {
     //IPS初始化
@@ -74,6 +101,10 @@ void ALL_Init()
     if(  qmc5883l_init()==0)
       printf("success");
     
+    //磁力计设置校准参数
+   mag_set_calibration(offset,scale);
+
+    
     //TOF
     TOF_init();    
     //串口   
@@ -89,15 +120,16 @@ void ALL_Init()
     PT1Filter_InitWithFreq(&filter_height_vz,20,100);//未调
     PT1Filter_InitWithFreq(&filter_pwm3901_vx,10,40);
     PT1Filter_InitWithFreq(&filter_pwm3901_vy,10,40);
-
-    //摄像头
-//    camera_init();
+   
+    // 初始化时复位PID数据，防止随机值导致电机输出异常
+    PID_Rest_Init(pPidObject, 12);
+    
+    
+//-------------------------------------软件逻辑------------------------------
+    state = STATE_LOCK;    
 
     
-    // 初始化时复位PID数据，防止随机值导致电机输出异常
-    PID_Rest(pPidObject, 6);
-
-//--------------pit-------------
+//-----------------------------------------pit-------------------------------
     pit_ms_init(PIT_CH0, 5);    //5ms
       
     pit_ms_init(PIT_CH1, 5);    
