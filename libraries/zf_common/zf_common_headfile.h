@@ -102,6 +102,8 @@
 #include "zf_device_wifi_spi.h"
 #include "zf_device_wifi_uart.h"
 #include "zf_device_wireless_uart.h"
+
+#include "small_driver_uart_control.h"
 //===================================================外接设备驱动层===================================================
 
 #include "INIT.h"

@@ -39,7 +39,6 @@ int main(void)
          out_flag = 0;
          key_val2 = 0;    
       }
-
      
 //--------------------vofa------------
         //  printf("%5f,%5f,%5f",world_data.px,world_data.vx,world_data.ax);
@@ -67,8 +66,8 @@ int main(void)
         ips200_show_string( 16*0,  16*15, "imu.gx=:");    ips200_show_float(16*6,  16*15, imu_data.gyro_x, 3,5);
         ips200_show_string( 16*0,  16*16, "of.height=:");    ips200_show_float(16*6,  16*16,of.height, 3,5);
         
-        system_delay_ms(10);
-       
+//        system_delay_ms(10);
+   
 
          
     }

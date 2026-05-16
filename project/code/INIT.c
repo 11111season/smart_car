@@ -97,8 +97,9 @@ void ALL_Init()
     //陀螺仪初始化
     imu660rc_init(IMU660RC_QUARTERNION_240HZ);  
     
-    //pwm初始化
-    motor_init();     
+    //电机初始化
+//    motor_init();     
+    small_driver_uart_init();
     
     //PID参数
     PID_param_Init();

@@ -82,7 +82,6 @@ typedef volatile struct {
 //标志位
 typedef volatile struct
 {
-    uint8_t unlock;
     uint8_t height_init;
     uint8_t of_init;
     uint8_t online;
@@ -90,6 +89,21 @@ typedef volatile struct
     uint8_t hover_lock;
     uint8_t take_off_yaw;
     uint8_t qmc5883l_init;
+    
+    //rc
+    uint8_t unlock;
+    uint8_t lock;
+//    uint8_t
+//    uint8_t
+//    uint8_t
+//    uint8_t
+//    uint8_t
+//    uint8_t
+//    
+    
+
+    
+    
 
 } _flag_param_st;//记得上电全给0
 

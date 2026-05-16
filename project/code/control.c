@@ -54,7 +54,7 @@ void flight_control(float dt)
     
     if(rc.emergency_cmd)
     {
-        motor_set_all(0,0,0,0);
+        small_driver_set_duty(0,0,0,0);
 
         flight_state = STATE_LOCK;
 
@@ -64,15 +64,33 @@ void flight_control(float dt)
     switch(flight_state)
     {
         case STATE_LOCK:
-            motor_set_all(0,0,0,0);
+          
+            flag.lock = 1;
+            flag.unlock = 0;
+            
+            small_driver_set_duty(0,0,0,0);
+            
+            rc.lock_cmd = 0;
+            
             if(rc.unlock_cmd)
             {
                 flight_state = STATE_UNLOCK;
             }
+            
             break;
+            
 
+            
         case STATE_UNLOCK:
-            motor_set_all(500,500,500,500);//电机转动但是不起飞
+          
+            flag.lock = 0;
+            flag.unlock = 1;
+            
+            
+//            small_driver_set_duty(500,500,500,500);//电机转动但是不起飞
+            
+            rc.unlock_cmd = 0;
+            
             if(rc.lock_cmd)
             {
                 flight_state = STATE_LOCK;
@@ -81,6 +99,9 @@ void flight_control(float dt)
             {
                 flight_state = STATE_TAKEOFF;
             }
+            
+
+            
             break;
             
         case STATE_TAKEOFF:
@@ -100,13 +121,7 @@ void flight_control(float dt)
             land(dt);
             break;    
            
-       
-//        case STATE_IDLE://手飞
-//            PIDRoll.target = 0;
-//            PIDPitch.target = 0;
-//            //高度怎么处理？油门怎么给
-//            stabilization(dt);
-//            break;
+      
 //            
 //        case STATE_TASK://路径规划
 //            hover_control(dt);
@@ -117,30 +132,23 @@ void flight_control(float dt)
 //------------------- 自稳-------------------
 void stabilization(float dt)
 {  
-    
-//---------调试------------
-  //  PID_Update(&PIDVelX, 0, imu_data.gyro_x, dt);   
 
-        
 //-------------------------pid------------
     //roll
     PID_Update_d_measure(&PIDRoll, PIDRoll.target, eulerAngle.roll, dt);           
     PID_Update(&PIDVelX, PIDRoll.out,imu_data.gyro_x, dt);        
  //   printf("%5f,%5f,%5f\r\n",PIDRoll.out,PT1Filter_Apply(&filter_imu_gyro_x,imu_data.gyro_x),PIDRoll.deriv_integ);
-    //  printf("%5f,%5f,%5f,%5f\r\n",PIDVelX.out,imu_data.gyro_x,PIDVelX.deriv_integ,PIDVelX.integ);
+ //  printf("%5f,%5f,%5f,%5f\r\n",PIDVelX.out,imu_data.gyro_x,PIDVelX.deriv_integ,PIDVelX.integ);
    
     //pitch
-//     PID_Update(&PIDVelY, 0, imu_data.gyro_y, dt);     
-    
     PID_Update_d_measure(&PIDPitch, PIDPitch.target, eulerAngle.pitch, dt);         
     PID_Update(&PIDVelY, PIDPitch.out, imu_data.gyro_y, dt);          
 
-    //yaw
-//    PID_Update(&PIDVelZ, 0, imu_data.gyro_z, dt);   
- 
+    //yaw 
     PID_Update_d_measure(&PIDYaw, PIDYaw.target, eulerAngle.yaw, dt);            
     PID_Update(&PIDVelZ, PIDYaw.out, imu_data.gyro_z, dt);         
 //      printf("%5f\r\n",PIDVelZ.out);
+    
     //Height
     PID_Update(&PIDHeight, PIDHeight.target, world_data.pz, dt);
     PID_Update(&PIDVelH, PIDHeight.out, world_data.vz, dt);
@@ -165,10 +173,8 @@ void stabilization(float dt)
     
     if(out_flag == 1)
     {
-      motor_set(1, m1);
-      motor_set(2, m2);
-      motor_set(3, m3);
-      motor_set(4, m4);    
+//      small_driver_set_duty(m1,m2,m3,m4);
+ 
     }
     else if(out_flag == 0)
     {
@@ -176,15 +182,9 @@ void stabilization(float dt)
       m2 = 0;
       m3 = 0;
       m4 = 0;
-  
-      motor_set(1, m1);
-      motor_set(2, m2);
-      motor_set(3, m3);
-      motor_set(4, m4); 
+      
+     small_driver_set_duty(m1,m2,m3,m4);
     }
-    
-    //  电机输出
-
 }
 
 ////高度

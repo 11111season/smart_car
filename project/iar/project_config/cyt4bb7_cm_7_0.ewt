@@ -1501,6 +1501,12 @@
             <name>$PROJ_DIR$\..\..\code\rc.h</name>
         </file>
         <file>
+            <name>$PROJ_DIR$\..\..\code\small_driver_uart_control.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\small_driver_uart_control.h</name>
+        </file>
+        <file>
             <name>$PROJ_DIR$\..\..\code\TOF.c</name>
         </file>
         <file>

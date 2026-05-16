@@ -93,9 +93,9 @@ void pit0_ch11_isr()                    // 定时器通道 11 周期中断服务函数
 {
     pit_isr_flag_clear(PIT_CH11);
     
-//    printf("state:%d, delta x:%d, delta y:%d\r\n", upflow302_state_flag,   
-//                                                   upflow302_receive.upflow302_x, 
-//                                                   upflow302_receive.upflow302_y);   // 打印光流数
+    printf("state:%d, delta x:%d, delta y:%d\r\n", upflow302_state_flag,   
+                                                   upflow302_receive.upflow302_x, 
+                                                   upflow302_receive.upflow302_y);   // 打印光流数
     OF_data_deal(0.025); //光流数据处理
     velocity_mahony_fusion(0.025); //获取速度数据 
 
@@ -249,8 +249,9 @@ void uart4_isr (void)
     if(uart_isr_mask(UART_4))            // 串口4接收中断
     {
 
-        uart_receiver_handler();                                                                // 串口接收机回调函数
-       
+//        uart_receiver_handler();                                                                // 串口接收机回调函数
+        uart_control_callback();                                                               
+
     }
     else                                // 串口4发送中断
     {

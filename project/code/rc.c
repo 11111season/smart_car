@@ -8,11 +8,11 @@ void RC_data_get(float dt)
         if( lora3a22_finsh_flag == 1)
         {
             //左边摇杆左右值
-            rc.yaw = lora3a22_uart_transfer.joystick[0];//1961--0--（-2034）
+            rc.yaw = -lora3a22_uart_transfer.joystick[0];//1961--0--（-2034）
             //左边摇杆上下值
             rc.thr = lora3a22_uart_transfer.joystick[1];//1982--0--（-2013）
             //右边摇杆左右值
-            rc.roll = lora3a22_uart_transfer.joystick[2];//2000--0--（-1994）
+            rc.roll = -lora3a22_uart_transfer.joystick[2];//2000--0--（-1994）
             //右边摇杆上下值
             rc.pitch = lora3a22_uart_transfer.joystick[3];//1946--0--（-2048）
 
@@ -49,11 +49,11 @@ void RC_data_deal(float dt)
 {
     //解锁
     static uint16_t unlock_cnt = 0;
-    if( rc.thr < -100 && rc.yaw < -100 && rc.pitch < -100 && rc.roll > 100)
+    if( rc.thr < -1650 && rc.yaw < -1700 && rc.pitch < -1600 && rc.roll > 1700)
     {
         unlock_cnt++;
 
-        if(unlock_cnt > 200)
+        if(unlock_cnt > 100)
         {
             rc.unlock_cmd = 1;
             unlock_cnt = 0;
@@ -66,7 +66,7 @@ void RC_data_deal(float dt)
 
     //上锁
     static uint16_t lock_cnt = 0;
-    if( rc.thr < -100 && rc.yaw > -100 && rc.pitch < -100 && rc.roll < 100)
+    if( rc.thr < -1650 && rc.yaw > 1650 && rc.pitch < -1700 && rc.roll < -1700)
     {
         lock_cnt++;
 
@@ -88,11 +88,11 @@ void RC_data_deal(float dt)
     static uint8 last_aux1;
     if(rc.aux1 == 1)
     {
-        rc.task_cmd = 1;
+        rc.land_cmd = 1;
     }
     else
     {
-        rc.task_cmd = 0;
+        rc.land_cmd = 0;
     }
     last_aux1 = rc.aux1;
 
@@ -100,9 +100,9 @@ void RC_data_deal(float dt)
     // AUX2:
     // 一键起飞
     static uint8 last_aux2;
-    if(rc.aux2 == 1 && last_aux2 == 0)
+    if( last_aux2 == 1)
     {
-        rc.takeoff_cmd = 1;
+        rc.takeoff_cmd  = 1;
     }
     else
     {
@@ -114,11 +114,11 @@ void RC_data_deal(float dt)
     static uint8 last_aux3;
     if(rc.aux3 == 1)
     {
-        rc.land_cmd = 1;
+        rc.task_cmd = 1;
     }
     else
     {
-        rc.land_cmd = 0;
+        rc.task_cmd = 0;
     }
     last_aux3 = rc.aux3;
 

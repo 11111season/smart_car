@@ -3,42 +3,117 @@
 //5%-10% ==1ms-2ms，500-1250
 //电机50hz，占空比最高1250;  电调发挥90% = 1125 。最低最好5% =  500 ；1.6ms=800占空比=0.64 ；
 
-void motor_init(void)
-{
-    pwm_init(PWM_CH1, 50, 0); // 无刷50Hz，1号电机
-    pwm_init(PWM_CH2, 50, 0); // 无刷50Hz，2号电机
-    pwm_init(PWM_CH3, 50, 0); // 无刷50Hz，3号电机
-    pwm_init(PWM_CH4, 50, 0); // 无刷50Hz，4号电机
-
-}
-
-
-void motor_set(uint8 motor_num , uint16 speed)
-{
-  
-    if(speed == 0) speed = 0;
-    else if(speed < 540) speed = 540;
-    else if(speed > 1125) speed = 1125;
-    
-    
-    
-    if(motor_num==1){pwm_set_duty(PWM_CH1, speed);}
-    else if(motor_num==2){pwm_set_duty(PWM_CH2, speed);}
-    else if(motor_num==3){pwm_set_duty(PWM_CH3, speed);}
-    else if(motor_num==4){pwm_set_duty(PWM_CH4, speed);}
-//    else{return 0;}
-}
 
 
 
-//四轴同控制
-void motor_set_all(uint16 m1, uint16 m2, uint16 m3, uint16 m4)
-{
-    motor_set(1, m1);
-    motor_set(2, m2);
-    motor_set(3, m3);
-    motor_set(4, m4);
-}
+//
+//void motor_init(void)
+//{
+//    pwm_init(PWM_CH1, 50, 0); // 无刷50Hz，1号电机
+//    pwm_init(PWM_CH2, 50, 0); // 无刷50Hz，2号电机
+//    pwm_init(PWM_CH3, 50, 0); // 无刷50Hz，3号电机
+//    pwm_init(PWM_CH4, 50, 0); // 无刷50Hz，4号电机
+//
+//}
+//
+//
+//void motor_set(uint8 motor_num , uint16 speed)
+//{
+//  
+//    if(speed == 0) speed = 0;
+//    else if(speed < 540) speed = 540;
+//    else if(speed > 1125) speed = 1125;
+//    
+//    
+//    
+//    if(motor_num==1){pwm_set_duty(PWM_CH1, speed);}
+//    else if(motor_num==2){pwm_set_duty(PWM_CH2, speed);}
+//    else if(motor_num==3){pwm_set_duty(PWM_CH3, speed);}
+//    else if(motor_num==4){pwm_set_duty(PWM_CH4, speed);}
+////    else{return 0;}
+//}
+//
+//
+//
+////四轴同控制
+//void motor_set_all(uint16 m1, uint16 m2, uint16 m3, uint16 m4)
+//{
+//    motor_set(1, m1);
+//    motor_set(2, m2);
+//    motor_set(3, m3);
+//    motor_set(4, m4);
+//}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//void motor_init(void)
+//{
+//    pwm_init(PWM_CH1, 50, 0); // 无刷50Hz，1号电机
+//    pwm_init(PWM_CH2, 50, 0); // 无刷50Hz，2号电机
+//    pwm_init(PWM_CH3, 50, 0); // 无刷50Hz，3号电机
+//    pwm_init(PWM_CH4, 50, 0); // 无刷50Hz，4号电机
+//
+//}
+//
+//
+//void motor_set(uint8 motor_num , uint16 speed)
+//{
+//  
+//    if(speed == 0) speed = 0;
+//    else if(speed < 540) speed = 540;
+//    else if(speed > 1125) speed = 1125;
+//    
+//    
+//    
+//    if(motor_num==1){pwm_set_duty(PWM_CH1, speed);}
+//    else if(motor_num==2){pwm_set_duty(PWM_CH2, speed);}
+//    else if(motor_num==3){pwm_set_duty(PWM_CH3, speed);}
+//    else if(motor_num==4){pwm_set_duty(PWM_CH4, speed);}
+////    else{return 0;}
+//}
+//
+//
+//
+////四轴同控制
+//void motor_set_all(uint16 m1, uint16 m2, uint16 m3, uint16 m4)
+//{
+//    motor_set(1, m1);
+//    motor_set(2, m2);
+//    motor_set(3, m3);
+//    motor_set(4, m4);
+//}
 
     
     
