@@ -1,0 +1,48 @@
+# IDE
+.idea/
+.vscode/
+*.suo
+*.user
+*.swp
+*.swo
+*~
+
+# Build output
+build/
+output/
+**/Debug_*/
+**/BrowseInfo/
+**/settings/
+**/Exe/
+*.o
+*.obj
+*.elf
+*.hex
+*.bin
+*.lst
+*.map
+*.out
+*.a
+*.lib
+*.pbi
+*.pbi.dep
+*.xcl
+*.xcl.rsp
+*.sim
+*.dnx
+*.crun
+*.dbgdt
+*.wsdt
+*.cspy.bat
+*.cspy.ps1
+.ninja_log
+
+# Desktop
+desktop.ini
+Thumbs.db
+
+# Claude AI settings
+.claude/
+
+# Logs
+*.log
