@@ -5,18 +5,26 @@
 #include "Motor.h"
 #include "My_Imu660ra.h"
 
-/*----------------------- Íâ²¿²ÎÊıÒıÓÃ -----------------------*/
+/*----------------------- ï¿½â²¿ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ -----------------------*/
 extern volatile int count;
 extern int change_flag;
 extern volatile uint64_t time;
 extern volatile int Start_Pid_Flag;
 extern volatile int Stop_Pid_Flag;
 extern volatile uint64_t time_us;
-/*----------------------- º¯Êı½Ó¿ÚÉùÃ÷ -----------------------*/
+/*----------------------- ï¿½ï¿½ï¿½ï¿½ï¿½Ó¿ï¿½ï¿½ï¿½ï¿½ï¿½ -----------------------*/
 void Angle_Test(float vx,float vy);
 void Square_Test(float speed_mps, uint32_t duration_ms);
 void Figure8_Test(float speed_mps, uint32_t duration_ms);
 void IMU660RA_Test(void);
 void My_IMU660RA_Test(void);
+
+// å•ä¿¡æ ‡è®°å½•ä¸å¯¼èˆªæµ‹è¯•
+void BeaconSingle_Test(void);
+void BeaconSingle_KeyHandler(void);
+
+// ISRç”¨: ä¿¡æ ‡å¯¼èˆªæœŸé—´è¦†ç›–target_vx/vy (é¿å…PositionControl_Updateæ¸…é›¶)
+extern uint8_t bcn_nav_on;
+extern float   bcn_nav_vx, bcn_nav_vy, bcn_nav_angle;
 
 #endif /* CODE_TEST_H_ */

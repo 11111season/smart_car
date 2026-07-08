@@ -14,6 +14,7 @@
 #include "motor.h"
 #include "My_imu660ra.h"
 #include "HC06_Driver.h"
+#include "test.h"
 
 static uint8_t pid_started = 0;
 
@@ -43,6 +44,8 @@ void KeyTask_Handler(void)
     {
         HC06_SendDroneCmd(2);
     }
+
+    BeaconSingle_KeyHandler();
 
     if(key_get_state(KEY_3) == KEY_SHORT_PRESS)
     {

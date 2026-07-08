@@ -44,7 +44,7 @@
 
 #define EXTERNAL_GEAR_RATIO 5.0f //外部齿轮减速比（70:14 = 5:1）
 #define ENCODER_GEAR_RATIO (30.0f/70.0f) //编码器齿轮比（30:70≈0.4286）
-#define  MOTOR_INTERNAL_RATIO    4.0f        // 电机内部减速比（实测推算）
+#define  MOTOR_INTERNAL_RATIO    1.0f        // 电机直驱(1:1)
 
 #define SAMPLE_TIME_MS          10.0f        // 编码器采样时间（毫秒）
 #define SAMPLE_TIME_S           (SAMPLE_TIME_MS / 1000.0f) // 采样时间（秒）

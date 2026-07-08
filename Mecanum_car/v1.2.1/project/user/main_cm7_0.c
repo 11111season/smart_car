@@ -11,6 +11,7 @@
 #include "init.h"
 #include "key_task.h"
 #include "HC06_Driver.h"
+#include "test.h"
 
 // **************************** 代码区域 ****************************
 
@@ -24,6 +25,7 @@ int main(void)
     while(true)
     {
         KeyTask_Handler();
+        BeaconSingle_Test();   // 信标导航持续更新
         HC06_Task();
     }
 }
