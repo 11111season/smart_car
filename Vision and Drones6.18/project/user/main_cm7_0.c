@@ -125,7 +125,7 @@ int main(void)
 //       }
        //printf("%d,%d,%d\r\n", qmc5883l_mag_x, qmc5883l_mag_y, qmc5883l_mag_z);
       //printf("%5d,%5d,%5d,%5d\r\n",m1,m2,m3,m4);
-    printf("%5f,%5f,%5f,%5f,%5f,%5f\r\n",PIDPosX.out,PIDPosY.out,world_data.vx,world_data.vy,(float)g_vision_share.car_x,(float)g_vision_share.car_y);
+//    printf("%5f,%5f,%5f,%5f,%5f,%5f\r\n",PIDPosX.out,PIDPosY.out,world_data.vx,world_data.vy,(float)g_vision_share.car_x,(float)g_vision_share.car_y);
 //    printf("%5f,%5f,%5f,%5f\r\n",imu_data.gyro_x_pt1,imu_data.gyro_y_pt1,eulerAngle.roll,eulerAngle.pitch);
       //printf("%5f,%5f,%5f,%5f\r\n",PIDHeight.out,PIDVelH.out,world_data.vz,alt.target_height);
       process_hc06_command();

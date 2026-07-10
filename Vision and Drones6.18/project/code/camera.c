@@ -2,6 +2,10 @@
 #include "HC06_Driver.h"
 #include <math.h> // 使用 atan2f 需要包含 math 库
 
+#define VISION_ENABLE_IPS_DISPLAY   1
+#define VISION_SERIAL_DEBUG         1
+#define VISION_SERIAL_DEBUG_DIV     1
+
 // 定义坐标点结构体
 typedef struct
 {
@@ -14,8 +18,7 @@ typedef enum
 {
     BLOB_UNKNOWN = 0,
     BLOB_BEACON,
-    BLOB_CAR_HEAD,
-    BLOB_CAR_TAIL
+    BLOB_CAR_MARKER       // V形车标
 } BlobType;
 
 // 新增：Blob 统一数据结构
@@ -33,14 +36,28 @@ typedef struct
 
     // 软判决：原始置信度分数 (无上限)
     uint16 raw_beacon_score;
-    uint16 raw_head_score;
-    uint16 raw_tail_score;
+    uint16 raw_marker_score;
 
     // 跨帧跟踪
     uint8 track_id;                    // 跟踪 ID (0=未跟踪)
     uint16 filt_beacon_score;            // 滤波后信标分
-    uint16 filt_head_score;              // 滤波后车头分
-    uint16 filt_tail_score;              // 滤波后车尾分
+    uint16 filt_marker_score;            // 滤波后车标分
+
+    // V形车标几何特征
+    uint16 marker_vertex_x;              // 角点 A (指向车头)
+    uint16 marker_vertex_y;
+    uint16 marker_base1_x;               // 底边端点 B
+    uint16 marker_base1_y;
+    uint16 marker_base2_x;               // 底边端点 C
+    uint16 marker_base2_y;
+    uint16 marker_base_mid_x;            // 底边中点 D (近似车中心)
+    uint16 marker_base_mid_y;
+    uint16 marker_angle_deg;             // 顶点夹角 (度)
+    uint16 marker_height;                // 顶点到底边垂距
+    uint16 marker_base_len;              // 底边长度 B-C
+    uint16 marker_arm1_len;              // 臂长 A-B
+    uint16 marker_arm2_len;              // 臂长 A-C
+    float  marker_heading;               // 车头方向 (D→A)
 } Blob;
 
 // ======================== 双核共享内存区 ========================
@@ -150,6 +167,177 @@ void draw_white_cross(uint8 cx, uint8 cy)
     }
 }
 
+// 计算两点距离平方
+static uint32 point_dist2(Point a, Point b)
+{
+    int32 dx = (int32)a.x - (int32)b.x;
+    int32 dy = (int32)a.y - (int32)b.y;
+    return (uint32)(dx * dx + dy * dy);
+}
+
+// V形车标特征提取：从 blob 像素中找 3 个关键点 (角点A, 底边端点B,C)
+static void compute_car_marker_feature(Blob *b, Point *pts, uint32 count)
+{
+    // 面积预过滤
+    if(b->area < CAR_MARK_MIN_AREA || b->area > CAR_MARK_MAX_AREA) return;
+
+    // 圆形度预过滤：近似圆形的 blob 不可能是 V 形（节省计算）
+    if(b->oheight > 0)
+    {
+        uint16 ow = b->owidth;
+        uint16 oh = b->oheight;
+        uint16 ratio = (ow > oh) ? (ow * 100 / oh) : (oh * 100 / ow);
+        if(ratio < 135) return;   // ~1:1.35 以内太圆，跳过
+    }
+
+    // 第一步：找 8 个极值候选点
+    Point candidates[8];
+    uint32 best_metric[8];
+    Point base1 = pts[0];
+    Point base2 = pts[0];
+    Point vertex = pts[0];
+    uint32 best_base_d2 = 0;
+    float best_height = 0.0f;
+
+    for(uint8 i = 0; i < 8; i++)
+    {
+        candidates[i] = pts[0];
+        best_metric[i] = (i & 1) ? 0 : 0xFFFFFFFF;
+    }
+
+    for(uint32 p = 0; p < count; p++)
+    {
+        uint32 x = pts[p].x;
+        uint32 y = pts[p].y;
+        uint32 metrics[8];
+        metrics[0] = x;
+        metrics[1] = x;
+        metrics[2] = y;
+        metrics[3] = y;
+        metrics[4] = x + y;
+        metrics[5] = x + y;
+        metrics[6] = x + (uint32)(CAMERA_H - y);
+        metrics[7] = x + (uint32)(CAMERA_H - y);
+
+        for(uint8 i = 0; i < 8; i += 2)
+        {
+            if(metrics[i] < best_metric[i])
+            {
+                best_metric[i] = metrics[i];
+                candidates[i] = pts[p];
+            }
+            if(metrics[i + 1] > best_metric[i + 1])
+            {
+                best_metric[i + 1] = metrics[i + 1];
+                candidates[i + 1] = pts[p];
+            }
+        }
+    }
+
+    // 第二步：从候选点中找最远的一对 → B, C（底边两端）
+    for(uint8 i = 0; i < 8; i++)
+    {
+        for(uint8 j = i + 1; j < 8; j++)
+        {
+            uint32 d2 = point_dist2(candidates[i], candidates[j]);
+            if(d2 > best_base_d2)
+            {
+                best_base_d2 = d2;
+                base1 = candidates[i];
+                base2 = candidates[j];
+            }
+        }
+    }
+
+    // 第三步：全像素扫描，找离 BC 直线垂直距离最远的点 → A（角点）
+    float bx = (float)((int32)base2.x - (int32)base1.x);
+    float by = (float)((int32)base2.y - (int32)base1.y);
+    float base_len = sqrtf(bx * bx + by * by);
+
+    if(base_len > 0.5f)
+    {
+        for(uint32 p = 0; p < count; p++)
+        {
+            float px = (float)((int32)pts[p].x - (int32)base1.x);
+            float py = (float)((int32)pts[p].y - (int32)base1.y);
+            float height = fabsf(px * by - py * bx) / base_len;
+            if(height > best_height)
+            {
+                best_height = height;
+                vertex = pts[p];
+            }
+        }
+    }
+
+    // 第四步：验证 V 形几何
+    float v1x = (float)((int32)base1.x - (int32)vertex.x);
+    float v1y = (float)((int32)base1.y - (int32)vertex.y);
+    float v2x = (float)((int32)base2.x - (int32)vertex.x);
+    float v2y = (float)((int32)base2.y - (int32)vertex.y);
+    float arm1 = sqrtf(v1x * v1x + v1y * v1y);
+    float arm2 = sqrtf(v2x * v2x + v2y * v2y);
+
+    // 余弦定理求夹角
+    float dot = v1x * v2x + v1y * v2y;
+    float cos_a = 1.0f;
+    if(arm1 > 0.5f && arm2 > 0.5f)
+    {
+        cos_a = dot / (arm1 * arm2);
+        if(cos_a > 1.0f) cos_a = 1.0f;
+        if(cos_a < -1.0f) cos_a = -1.0f;
+    }
+    float angle_deg_f = acosf(cos_a) * 57.2957795f;
+
+    // 验证通过条件
+    if(base_len < (float)CAR_MARK_MIN_BASE_LEN) return;
+    if(arm1 < (float)CAR_MARK_MIN_ARM_LEN || arm2 < (float)CAR_MARK_MIN_ARM_LEN) return;
+    if(best_height < (float)CAR_MARK_MIN_HEIGHT) return;
+    if(angle_deg_f < (float)CAR_MARK_MIN_ANGLE_DEG || angle_deg_f > (float)CAR_MARK_MAX_ANGLE_DEG) return;//淘汰条件：底边太短、臂太短、高太低、角度不在50°~120°
+
+    // 第五步：存储特征
+    uint16 base_mid_x = (base1.x + base2.x) / 2;
+    uint16 base_mid_y = (base1.y + base2.y) / 2;
+
+    b->marker_base1_x = base1.x;
+    b->marker_base1_y = base1.y;
+    b->marker_base2_x = base2.x;
+    b->marker_base2_y = base2.y;
+    b->marker_vertex_x = vertex.x;
+    b->marker_vertex_y = vertex.y;
+    b->marker_base_mid_x = base_mid_x;
+    b->marker_base_mid_y = base_mid_y;
+    b->marker_base_len = (uint16)(base_len + 0.5f);
+    b->marker_height = (uint16)(best_height + 0.5f);
+    b->marker_angle_deg = (uint16)(angle_deg_f + 0.5f);
+    b->marker_arm1_len = (uint16)(arm1 + 0.5f);
+    b->marker_arm2_len = (uint16)(arm2 + 0.5f);
+    b->marker_heading = atan2f((float)((int32)vertex.y - (int32)base_mid_y),
+                               (float)((int32)vertex.x - (int32)base_mid_x));
+}
+
+// V形车标调试绘制：在图像上画出角点、底边端点、底边中点
+static void draw_marker_debug(Blob *b)
+{
+#if CAR_MARK_DEBUG_DRAW
+    int16 ax = (int16)b->marker_vertex_x;
+    int16 ay = (int16)b->marker_vertex_y;
+    int16 bx = (int16)b->marker_base1_x;
+    int16 by = (int16)b->marker_base1_y;
+    int16 cx = (int16)b->marker_base2_x;
+    int16 cy = (int16)b->marker_base2_y;
+    int16 dx = (int16)b->marker_base_mid_x;
+    int16 dy = (int16)b->marker_base_mid_y;
+
+    // 角点 A：白色方框 size 4
+    draw_white_box((uint16)ax, (uint16)ay, 4);
+    // 底边端点 B：白色方框 size 3
+    draw_white_box((uint16)bx, (uint16)by, 3);
+    // 底边端点 C：白色方框 size 3
+    draw_white_box((uint16)cx, (uint16)cy, 3);
+    // 底边中点 D：黑色十字
+    draw_black_cross((uint16)dx, (uint16)dy);
+#endif
+}
 
 
 // 新增核心函数 ：提取并分类所有连通域
@@ -223,6 +411,11 @@ static void extract_blobs(void)
             b->area = tail;
             b->core_count = core_count;
             b->type = BLOB_UNKNOWN;
+            b->raw_beacon_score = 0;
+            b->raw_marker_score = 0;
+            b->filt_beacon_score = 0;
+            b->filt_marker_score = 0;
+            b->track_id = 0;
 
             if(b->height == 0) continue;
 
@@ -258,6 +451,9 @@ static void extract_blobs(void)
                 b->owidth  = (uint16)(max_u - min_u + 1.0f);
                 b->oheight = (uint16)(max_v - min_v + 1.0f);
             }
+
+            // 提取 V 形车标几何特征
+            compute_car_marker_feature(b, queue_buf, tail);
 
             // 不在此处做硬分类，类型由软判决系统统一确定
             blob_num++;
@@ -317,205 +513,52 @@ static void compute_raw_scores(void)
 
         blobs[i].raw_beacon_score = (uint16)bs;
 
-        // ---- 车头分：面积偏小 + 接近圆形 ----
-        int32 hs = 0;
-        {   // 面积 (0~120)：小面积高分，车头通常不大
-            if(area >= 3 && area <= 40)
-                hs += 120;
-            else if(area > 40 && area <= 100)
-                hs += 120 - (area - 40) * 120 / 60;   // 40→120, 100→0
-            else if(area < 3 && area >= 1)
-                hs += area * 120 / 3;                 // 1→40, 3→120
-            else
-                hs += 0;
-        }
-        {   // 圆度 (0~50)
-            int32 rnd = 100 - rd;
-            if(rnd < 10) rnd = 10;
-            hs += (rnd - 10) * 50 / 90;
-        }
-
-        // 长条惩罚：车头必须是圆形，ord>20 开始衰减，ord≥100 归零
-        if(ord > 20)
+        // ---- 车标分 (V形) ----
         {
-            int32 factor = (ord >= 100) ? 0 : (100 - ord);  // 20→80, 100→0
-            hs = hs * factor / 100;
-        }
+            uint16 ms = 0;
 
-        blobs[i].raw_head_score = (uint16)hs;
+            // 面积分 (0~30)：峰值在理想面积区间
+            if(area >= 80 && area <= 300)
+                ms += 30;
+            else if(area > 300 && area <= CAR_MARK_MAX_AREA)
+                ms += 30 - (area - 300) * 30 / (CAR_MARK_MAX_AREA - 300);
+            else if(area < 80 && area >= CAR_MARK_MIN_AREA)
+                ms += area * 30 / 80;
 
-        // ---- 车尾分：旋转不变长条为主，面积为辅 ----
-        int32 ts = 0;
-
-        // 面积贡献 (0~40)：只有足够大才给分，面积<120 得分很少
-        if(area >= 200 && area <= 500)
-            ts += 40;
-        else if(area > 500)
-            ts += 40 - (area - 500) * 40 / 200;   // 500→40, 700→0
-        else if(area >= 120)
-            ts += (area - 120) * 40 / 80;         // 120→0, 200→40
-        else
-            ts += 0;
-
-        // 长条偏离度贡献 (0~100)：ord 越大得分越高，主导车尾分
-        // 权重提升：长条形是车尾最核心特征，单独即可拉满车尾分
-        if(ord < 20)
-            ts += 0;
-        else if(ord >= 100)
-            ts += 100;
-        else
-            ts += (ord - 20) * 100 / 80;           // 20→0, 100→100
-
-        blobs[i].raw_tail_score = (uint16)ts;
-    }
-
-    // 航向一致性惩罚：利用历史航向角，对方向偏离的车头候选降分
-    {
-        float ref_heading = g_vision_share.heading_angle;
-        // 找出临时车尾（原始车尾分最高且超过阈值）
-        int16 temp_tail_x = -1, temp_tail_y = -1;
-        uint8 best_tail_score = 60;
-        for(uint8 i = 0; i < blob_num; i++)
-        {
-            if(blobs[i].raw_tail_score > best_tail_score)
+            // 角度分 (0~30)：峰值在 CAR_MARK_ANGLE_CENTER_DEG (90°)
             {
-                best_tail_score = blobs[i].raw_tail_score;
-                temp_tail_x = blobs[i].cx;
-                temp_tail_y = blobs[i].cy;
-            }
-        }
-        // 检查上一帧是否有过小车（通过 prev_tracks 判断航向是否有效）
-        uint8 prev_had_car = 0;
-        for(uint8 p = 0; p < prev_track_num; p++)
-        {
-            if(prev_tracks[p].type == BLOB_CAR_TAIL || prev_tracks[p].type == BLOB_CAR_HEAD)
-            {
-                prev_had_car = 1;
-                break;
-            }
-        }
-        // 有临时车尾且上一帧有车（航向有效）时执行惩罚
-        if(temp_tail_x >= 0 && prev_had_car)
-        {
-            for(uint8 i = 0; i < blob_num; i++)
-            {
-                if(blobs[i].cx == temp_tail_x && blobs[i].cy == temp_tail_y)
-                    continue;
-                float dx = (float)blobs[i].cx - temp_tail_x;
-                float dy = (float)blobs[i].cy - temp_tail_y;
-                float angle = atan2f(dy, dx);
-                float diff = fabsf(angle - ref_heading);
-                if(diff > 3.14159265f) diff = 6.2831853f - diff;
-                float diff_deg = diff * 180.0f / 3.14159265f;
-                // 减法惩罚：角度偏离越大扣分越多，>20°扣80分
-                if(diff_deg > 20.0f)
+                uint16 angle = blobs[i].marker_angle_deg;
+                if(angle >= CAR_MARK_MIN_ANGLE_DEG && angle <= CAR_MARK_MAX_ANGLE_DEG)
                 {
-                    int32 deduct = 80;
-                    blobs[i].raw_head_score = (blobs[i].raw_head_score > deduct) ? blobs[i].raw_head_score - deduct : 0;
-                }
-                else
-                {
-                    int32 deduct = (int32)(diff_deg / 20.0f * 80.0f);
-                    blobs[i].raw_head_score = (blobs[i].raw_head_score > deduct) ? blobs[i].raw_head_score - deduct : 0;
+                    int32 diff = (angle > CAR_MARK_ANGLE_CENTER_DEG)
+                        ? (angle - CAR_MARK_ANGLE_CENTER_DEG)
+                        : (CAR_MARK_ANGLE_CENTER_DEG - angle);
+                    ms += 30 - diff * 30 / 50;
                 }
             }
-        }
-    }
 
-    // ---------- 位置惩罚：远离上一帧车尾的 blob 降低车尾分 ----------
-    {
-        int16 prev_tail_x = -1, prev_tail_y = -1;
-        for(uint8 p = 0; p < prev_track_num; p++)
-        {
-            if(prev_tracks[p].type == BLOB_CAR_TAIL)
+            // 对称性分 (0~20)：两臂长度越接近分越高
             {
-                prev_tail_x = (int16)prev_tracks[p].cx;
-                prev_tail_y = (int16)prev_tracks[p].cy;
-                break;
-            }
-        }
-        if(prev_tail_x >= 0)
-        {
-            const uint16 MAX_MOVE_DIST = 60;
-            const uint16 MAX_PENALTY_DIST = 120;
-            for(uint8 i = 0; i < blob_num; i++)
-            {
-                uint16 dx = (blobs[i].cx > prev_tail_x) ? (blobs[i].cx - prev_tail_x) : (prev_tail_x - blobs[i].cx);
-                uint16 dy = (blobs[i].cy > prev_tail_y) ? (blobs[i].cy - prev_tail_y) : (prev_tail_y - blobs[i].cy);
-                uint16 dist = dx + dy;
-                if(dist > MAX_MOVE_DIST)
+                uint16 arm1 = blobs[i].marker_arm1_len;
+                uint16 arm2 = blobs[i].marker_arm2_len;
+                if(arm1 > 0 && arm2 > 0)
                 {
-                    float factor = (dist > MAX_PENALTY_DIST) ? 0.0f : (1.0f - (float)(dist - MAX_MOVE_DIST) / (MAX_PENALTY_DIST - MAX_MOVE_DIST));
-                    blobs[i].raw_tail_score = (uint16)((float)blobs[i].raw_tail_score * factor);
+                    uint16 longer = (arm1 > arm2) ? arm1 : arm2;
+                    uint16 shorter = (arm1 > arm2) ? arm2 : arm1;
+                    uint16 ratio = shorter * 100 / longer;
+                    if(ratio >= 70)      ms += 20;
+                    else if(ratio >= 40) ms += (ratio - 40) * 20 / 30;
                 }
             }
-        }
-    }
 
-    // ---------- 车尾距离惩罚：远离车尾的 blob 降低车头分 ----------
-    // 信标通常离车尾不远，远离车尾的车头候选极可能是误判
-    {
-        int16 tail_x = -1, tail_y = -1;
-        uint8 best_tail_score = 60;
-        for(uint8 i = 0; i < blob_num; i++)
-        {
-            if(blobs[i].raw_tail_score > best_tail_score)
+            // 高度分 (0~20)：顶点距离底边越远 V 形越明显
             {
-                best_tail_score = blobs[i].raw_tail_score;
-                tail_x = (int16)blobs[i].cx;
-                tail_y = (int16)blobs[i].cy;
+                uint16 h = blobs[i].marker_height;
+                if(h >= CAR_MARK_MIN_HEIGHT * 3)     ms += 20;
+                else if(h >= CAR_MARK_MIN_HEIGHT)    ms += (h - CAR_MARK_MIN_HEIGHT) * 20 / (CAR_MARK_MIN_HEIGHT * 2);
             }
-        }
-        if(tail_x >= 0)
-        {
-            const uint16 TAIL_HEAD_MAX_DIST = 60;        // 超过此距离开始扣分
-            const uint16 TAIL_HEAD_PENALTY_DIST = 120;   // 此距离扣满80分
-            for(uint8 i = 0; i < blob_num; i++)
-            {
-                if(blobs[i].cx == tail_x && blobs[i].cy == tail_y) continue;
-                uint16 dx = (blobs[i].cx > tail_x) ? (blobs[i].cx - tail_x) : (tail_x - blobs[i].cx);
-                uint16 dy = (blobs[i].cy > tail_y) ? (blobs[i].cy - tail_y) : (tail_y - blobs[i].cy);
-                uint16 dist = dx + dy;
-                if(dist > TAIL_HEAD_MAX_DIST)
-                {
-                    // 减法惩罚：距离越远扣分越多，>120px扣80分
-                    int32 deduct = (dist > TAIL_HEAD_PENALTY_DIST) ? 80
-                        : (int32)((float)(dist - TAIL_HEAD_MAX_DIST) / (TAIL_HEAD_PENALTY_DIST - TAIL_HEAD_MAX_DIST) * 80.0f);
-                    blobs[i].raw_head_score = (blobs[i].raw_head_score > deduct) ? blobs[i].raw_head_score - deduct : 0;
-                }
-            }
-        }
-    }
 
-    // 空间邻近加分：当前帧原始车尾分最高的 blob → 车头分奖励
-    {
-        int16 temp_tail_x = -1, temp_tail_y = -1;
-        uint8 best_tail_score = 60;
-        for(uint8 i = 0; i < blob_num; i++)
-        {
-            if(blobs[i].raw_tail_score > best_tail_score)
-            {
-                best_tail_score = blobs[i].raw_tail_score;
-                temp_tail_x = (int16)blobs[i].cx;
-                temp_tail_y = (int16)blobs[i].cy;
-            }
-        }
-        if(temp_tail_x >= 0)
-        {
-            for(uint8 i = 0; i < blob_num; i++)
-            {
-                if(blobs[i].cx == temp_tail_x && blobs[i].cy == temp_tail_y) continue;
-                uint16 dx = (blobs[i].cx > temp_tail_x) ? (blobs[i].cx - temp_tail_x) : (temp_tail_x - blobs[i].cx);
-                uint16 dy = (blobs[i].cy > temp_tail_y) ? (blobs[i].cy - temp_tail_y) : (temp_tail_y - blobs[i].cy);
-                uint16 dist = dx + dy;
-                if(dist < 80)
-                {
-                    uint8 bonus = 80 - dist;
-                    if(bonus > 50) bonus = 50;
-                    uint16 new_head = (uint16)blobs[i].raw_head_score + bonus;
-                    blobs[i].raw_head_score = (uint16)new_head;
-                }
-            }
+            blobs[i].raw_marker_score = ms;
         }
     }
 }
@@ -547,8 +590,7 @@ static void cross_frame_track(void)
         {
             blobs[best_j].track_id           = prev_tracks[i].track_id;
             blobs[best_j].filt_beacon_score  = prev_tracks[i].filt_beacon_score;
-            blobs[best_j].filt_head_score    = prev_tracks[i].filt_head_score;
-            blobs[best_j].filt_tail_score    = prev_tracks[i].filt_tail_score;
+            blobs[best_j].filt_marker_score  = prev_tracks[i].filt_marker_score;
             matched[best_j] = 1;
         }
     }
@@ -561,8 +603,7 @@ static void cross_frame_track(void)
             blobs[j].track_id = next_track_id++;
             if(next_track_id == 0) next_track_id = 1;
             blobs[j].filt_beacon_score = blobs[j].raw_beacon_score;
-            blobs[j].filt_head_score   = blobs[j].raw_head_score;
-            blobs[j].filt_tail_score   = blobs[j].raw_tail_score;
+            blobs[j].filt_marker_score = blobs[j].raw_marker_score;
         }
     }
 }
@@ -589,31 +630,29 @@ static void save_tracks(void)
          blobs[i].filt_beacon_score = (uint16)(
              SCORE_HISTORY_WEIGHT * (float)blobs[i].filt_beacon_score +
              SCORE_CURRENT_WEIGHT * (float)blobs[i].raw_beacon_score);
-         blobs[i].filt_head_score = (uint16)(
-             SCORE_HISTORY_WEIGHT * (float)blobs[i].filt_head_score +
-             SCORE_CURRENT_WEIGHT * (float)blobs[i].raw_head_score);
-         blobs[i].filt_tail_score = (uint16)(
-             SCORE_HISTORY_WEIGHT * (float)blobs[i].filt_tail_score +
-             SCORE_CURRENT_WEIGHT * (float)blobs[i].raw_tail_score);
+         blobs[i].filt_marker_score = (uint16)(
+             SCORE_HISTORY_WEIGHT * (float)blobs[i].filt_marker_score +
+             SCORE_CURRENT_WEIGHT * (float)blobs[i].raw_marker_score);
 
          // 判决用分数：首帧用原始分，匹配帧用滤波分
-         uint16 s1 = (blobs[i].track_id == 0)
+         uint16 s_beacon = (blobs[i].track_id == 0)
              ? blobs[i].raw_beacon_score : blobs[i].filt_beacon_score;
-         uint16 s2 = (blobs[i].track_id == 0)
-             ? blobs[i].raw_head_score   : blobs[i].filt_head_score;
-         uint16 s3 = (blobs[i].track_id == 0)
-             ? blobs[i].raw_tail_score   : blobs[i].filt_tail_score;
+         uint16 s_marker = (blobs[i].track_id == 0)
+             ? blobs[i].raw_marker_score : blobs[i].filt_marker_score;
 
-         // 找最高分
-         uint16 max_s = s1;
-         uint16 second_s = 0;
-         BlobType best_type = BLOB_BEACON;
-
-         if(s2 > max_s) { second_s = max_s; max_s = s2; best_type = BLOB_CAR_HEAD; }
-         else if(s2 > second_s) second_s = s2;
-
-         if(s3 > max_s) { second_s = max_s; max_s = s3; best_type = BLOB_CAR_TAIL; }
-         else if(s3 > second_s) second_s = s3;
+         // 两分类比较：车标分 > 信标分 → BLOB_CAR_MARKER，否则 BLOB_BEACON
+         uint16 max_s, second_s;
+         BlobType best_type;
+         if(s_marker >= s_beacon)
+         {
+             max_s = s_marker; second_s = s_beacon;
+             best_type = BLOB_CAR_MARKER;
+         }
+         else
+         {
+             max_s = s_beacon; second_s = s_marker;
+             best_type = BLOB_BEACON;
+         }
 
          // 首帧降低门槛：max≥15 且 margin≥8；匹配帧严格：max≥30 且 margin≥12
          uint8 min_conf = (blobs[i].track_id == 0) ? 15 : SCORE_MIN_CONFIDENCE;
@@ -638,78 +677,59 @@ static void save_tracks(void)
              if(hist_type == best_type)
                  blobs[i].type = hist_type;
              else
-                 blobs[i].type = best_type;   // 不一致则信任当前最高分
+                 blobs[i].type = best_type;
          }
          else
          {
              blobs[i].type = BLOB_UNKNOWN;
          }
-    }
 
-    // 强制修正：低亮度（br<40）且 raw_head_score > 80 的信标改为车头
-    for(uint8 i = 0; i < blob_num; i++)
-    {
-        if(blobs[i].type == BLOB_BEACON)
+        // Marker 类型额外校验：分数必须达最低阈值，角度必须在合理范围
+        if(blobs[i].type == BLOB_CAR_MARKER)
         {
-            uint8 br = (blobs[i].area > 0) ? (blobs[i].core_count * 100 / blobs[i].area) : 0;
-            if(br < 40 && blobs[i].raw_head_score > 80)
+            uint16 ms = (blobs[i].track_id == 0) ? blobs[i].raw_marker_score : blobs[i].filt_marker_score;
+            if(ms < CAR_MARK_MIN_SCORE ||
+               blobs[i].marker_angle_deg < CAR_MARK_MIN_ANGLE_DEG ||
+               blobs[i].marker_angle_deg > CAR_MARK_MAX_ANGLE_DEG)
             {
-                blobs[i].type = BLOB_CAR_HEAD;
+                blobs[i].type = BLOB_UNKNOWN;
             }
         }
     }
-
-    }
+ }
 
 // ==================== 旧逻辑保留区域 ====================
 
-
-
-// 新增核心函数 2：小车头尾配对与解算
-static uint8 find_car_pose(uint8 *car_x, uint8 *car_y, float *heading, Blob **head_blob, Blob **tail_blob)
+// V形车标姿态解算：从 BLOB_CAR_MARKER 获取车中心和航向
+static uint8 find_car_pose_by_marker(uint8 *car_x, uint8 *car_y, float *heading, Blob **marker_blob)
 {
-    uint32 best_dist2 = 0;
-    Blob *best_head = NULL;
-    Blob *best_tail = NULL;
+    Blob *best = NULL;
+    uint16 best_score = CAR_MARK_MIN_SCORE;
 
     for(uint8 i = 0; i < blob_num; i++)
     {
-        if(blobs[i].type != BLOB_CAR_HEAD) continue;
-
-        for(uint8 j = 0; j < blob_num; j++)
+        if(blobs[i].type != BLOB_CAR_MARKER) continue;
+        uint16 s = (blobs[i].track_id == 0)
+            ? blobs[i].raw_marker_score : blobs[i].filt_marker_score;
+        if(s > best_score)
         {
-            if(blobs[j].type != BLOB_CAR_TAIL) continue;
-
-            int32 dx = (int32)blobs[i].cx - blobs[j].cx;
-            int32 dy = (int32)blobs[i].cy - blobs[j].cy;
-            uint32 dist2 = dx * dx + dy * dy;
-
-            if(dist2 < CAR_MATCH_MIN_DIST2 || dist2 > CAR_MATCH_MAX_DIST2) continue;
-
-            if(dist2 > best_dist2)
-            {
-                best_dist2 = dist2;
-                best_head = &blobs[i];
-                best_tail = &blobs[j];
-            }
+            best_score = s;
+            best = &blobs[i];
         }
     }
 
-    if(best_head == NULL || best_tail == NULL) return 0;
+    if(best == NULL) return 0;
 
-    *car_x = (best_head->cx + best_tail->cx) / 2;
-    *car_y = (best_head->cy + best_tail->cy) / 2;
-    
-    *heading = atan2f((float)(best_head->cy - best_tail->cy), 
-                      (float)(best_head->cx - best_tail->cx));
+    // 车中心 = 底边中点 D
+    *car_x = (uint8)best->marker_base_mid_x;
+    *car_y = (uint8)best->marker_base_mid_y;
 
-    *head_blob = best_head;
-    *tail_blob = best_tail;
+    // 航向 = D → A（角点方向即车头方向）
+    *heading = best->marker_heading;
 
+    *marker_blob = best;
     return 1;
 }
-
-
 
 void camera_init(void)
 {
@@ -735,8 +755,10 @@ void camera_init(void)
         gpio_toggle_level(CAMERA_STATUS_LED);
         system_delay_ms(500);
     }
-   ips200_init(IPS200_TYPE_SPI);
+    #if VISION_ENABLE_IPS_DISPLAY
+    ips200_init(IPS200_TYPE_SPI);
     ips200_clear();
+#endif
 }
 
 
@@ -770,31 +792,28 @@ void camera_process(void)
         smooth_and_decide();
         save_tracks();
 
-        // 全场至多一组车头+车尾，取滤波分最高的
+        // V 形车标去重：至多保留一个最好的 marker
         {
-            uint8 best_h = 0xFF, best_t = 0xFF;
-            uint16 best_hs = 0, best_ts = 0;
+            uint8 best_m = 0xFF;
+            uint16 best_ms = 0;
             for(uint8 i = 0; i < blob_num; i++)
             {
-                if(blobs[i].type == BLOB_CAR_HEAD && blobs[i].filt_head_score > best_hs)
+                if(blobs[i].type == BLOB_CAR_MARKER)
                 {
-                    best_hs = blobs[i].filt_head_score;
-                    best_h = i;
-                }
-                if(blobs[i].type == BLOB_CAR_TAIL && blobs[i].filt_tail_score > best_ts)
-                {
-                    best_ts = blobs[i].filt_tail_score;
-                    best_t = i;
+                    uint16 s = (blobs[i].track_id == 0) ? blobs[i].raw_marker_score : blobs[i].filt_marker_score;
+                    if(s > best_ms) { best_ms = s; best_m = i; }
                 }
             }
-            for(uint8 i = 0; i < blob_num; i++)
+            if(best_m != 0xFF)
             {
-                if(blobs[i].type == BLOB_CAR_HEAD && i != best_h) blobs[i].type = BLOB_UNKNOWN;
-                if(blobs[i].type == BLOB_CAR_TAIL && i != best_t) blobs[i].type = BLOB_UNKNOWN;
+                for(uint8 i = 0; i < blob_num; i++)
+                {
+                    if(blobs[i].type == BLOB_CAR_MARKER && i != best_m) blobs[i].type = BLOB_UNKNOWN;
+                }
             }
         }
 
-        // 去重后其余未知 blob 均视为信标
+        // 其余未知 blob 均视为信标
         for(uint8 i = 0; i < blob_num; i++)
         {
             if(blobs[i].type == BLOB_UNKNOWN)
@@ -808,11 +827,11 @@ void camera_process(void)
             for(uint8 d = 0; d < blob_num && d < 5; d++)
             {
                 uint16 br = (blobs[d].area > 0) ? (blobs[d].core_count * 100 / blobs[d].area) : 0;
-                printf(",%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+                printf(",%d,%d,%d,%d,%d,%d,%d,%d,%d",
                 blobs[d].track_id, blobs[d].area, br,
                 (blobs[d].oheight>0)?(int32)blobs[d].owidth*100/(int32)blobs[d].oheight:0,
-                blobs[d].raw_beacon_score, blobs[d].raw_head_score, blobs[d].raw_tail_score,
-                blobs[d].filt_beacon_score, blobs[d].filt_head_score, blobs[d].filt_tail_score,
+                blobs[d].raw_beacon_score, blobs[d].raw_marker_score,
+                blobs[d].filt_beacon_score, blobs[d].filt_marker_score,
                 (int)blobs[d].type);
             }
             printf("\r\n");
@@ -890,25 +909,22 @@ void camera_process(void)
                 draw_black_cross(blobs[i].cx, blobs[i].cy);
         }
 
-        Blob *head_blob = NULL;
-        Blob *tail_blob = NULL;
+        Blob *marker_blob = NULL;
         uint8 car_x = 0;
         uint8 car_y = 0;
         float raw_heading = 0.0f;
 
-        // 车头车尾独立画框（无论配对是否成功）
+        // 绘制 V 形车标调试标记
         for(uint8 i = 0; i < blob_num; i++)
         {
-            if(blobs[i].type == BLOB_CAR_TAIL)
+            if(blobs[i].type == BLOB_CAR_MARKER)
             {
-                draw_white_box(blobs[i].cx, blobs[i].cy, 5);
-                draw_black_cross(blobs[i].cx, blobs[i].cy);
+                draw_marker_debug(&blobs[i]);
             }
-            else if(blobs[i].type == BLOB_CAR_HEAD)
-                draw_white_box(blobs[i].cx, blobs[i].cy, 3);
         }
 
-        uint8 found_car = find_car_pose(&car_x, &car_y, &raw_heading, &head_blob, &tail_blob);
+        // 姿态解算：仅使用 V 形车标
+        uint8 found_car = find_car_pose_by_marker(&car_x, &car_y, &raw_heading, &marker_blob);
 
         // 小车坐标衰减保留：检测到时更新，丢失时平滑衰减归零
         static float retain_car_x = 0.0f;
@@ -916,8 +932,10 @@ void camera_process(void)
 
         if(found_car)
         {
-            draw_white_box(head_blob->cx, head_blob->cy, 3);
-            draw_white_box(tail_blob->cx, tail_blob->cy, 5);
+            // 绘制车中心标记
+            draw_white_box(marker_blob->marker_vertex_x, marker_blob->marker_vertex_y, 4);
+            draw_white_box(marker_blob->marker_base1_x, marker_blob->marker_base1_y, 3);
+            draw_white_box(marker_blob->marker_base2_x, marker_blob->marker_base2_y, 3);
             draw_white_cross(car_x, car_y);
             update_marker(car_x, car_y, 1);
 
@@ -1026,7 +1044,28 @@ void camera_process(void)
        //}
         
         // 刷新屏幕
+        #if VISION_SERIAL_DEBUG
+        if((g_vision_share.frame_id % VISION_SERIAL_DEBUG_DIV) == 0)
+        {
+            printf("%lu,%u,%u,%u,%d,%d,%u,%d,%d,%d,%d,%d\r\n",
+                   (unsigned long)g_vision_share.frame_id,
+                   (unsigned int)blob_num,
+                   (unsigned int)g_vision_share.target_found,
+                   (unsigned int)g_vision_share.car_found,
+                   (int)g_vision_share.car_x,
+                   (int)g_vision_share.car_y,
+                   (unsigned int)g_vision_share.beacon_found,
+                   (int)g_vision_share.beacon_err_x,
+                   (int)g_vision_share.beacon_err_y,
+                   (int)g_vision_share.err_x,
+                   (int)g_vision_share.err_y,
+                   (int)(g_vision_share.heading_angle * 1000.0f));
+        }
+#endif
+
+#if VISION_ENABLE_IPS_DISPLAY
         ips200_displayimage03x(image_buffer[0], CAMERA_W, CAMERA_H);
+#endif
 
         mt9v03x_finish_flag = 0;
     }

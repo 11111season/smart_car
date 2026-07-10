@@ -16,13 +16,22 @@
 // 调试开关：0=关闭, 1=每帧每个blob打印分数
 #define DEBUG_SCORES            0
 
-// 新增：配对与姿态解算参数
-#define CAR_MATCH_MIN_DIST2      9      // 最小头尾距离² ≈ 3px
-#define CAR_MATCH_MAX_DIST2      3600   // 最大头尾距离² ≈ 60px
 #define HEADING_FILTER_ALPHA     0.7f
 
 // 误差衰减系数 (每帧衰减比例, 0~1, 越小衰减越快)
-#define ERR_DECAY_FACTOR        0.70f
+#define ERR_DECAY_FACTOR        0.50f
+
+// ================= V形车标检测参数 =================
+#define CAR_MARK_MIN_AREA          20      // 车标候选最小面积
+#define CAR_MARK_MAX_AREA          900     // 车标候选最大面积
+#define CAR_MARK_MIN_BASE_LEN      8       // 底边最小长度 (像素)
+#define CAR_MARK_MIN_ARM_LEN       6       // 臂最小长度 (像素)
+#define CAR_MARK_MIN_HEIGHT        4       // 顶点到底边最小垂距 (像素)
+#define CAR_MARK_MIN_ANGLE_DEG     50      // 最小顶点角度 (度)
+#define CAR_MARK_MAX_ANGLE_DEG     120     // 最大顶点角度 (度)
+#define CAR_MARK_ANGLE_CENTER_DEG  80      // 理想顶点角度 (直角≈90°)
+#define CAR_MARK_MIN_SCORE         55      // 最低车标分类分数
+#define CAR_MARK_DEBUG_DRAW        1       // 1=绘制V形调试叠加到图像
 
 // ================= 控制参数配置 =================
 #define DEADZONE_X          10
