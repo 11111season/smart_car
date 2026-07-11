@@ -203,6 +203,7 @@ void InertialNav_KeyHandler(void)
             // 开始记录信标: PID全关 + PWM清零
             Motor_Enable_PID(0);
             PID_Enable(&angle_pid_yaw, 0);
+            PID_Enable(&angle_pid_gyro, 0);
             bcn_nav_on = 0;
             Motor_SetSpeed(&motor_L1,0,MotorL1_Turn,MotorL1_Pwm);
             Motor_SetSpeed(&motor_L2,0,MotorL2_Turn,MotorL2_Pwm);
@@ -244,6 +245,7 @@ void InertialNav_KeyHandler(void)
         // 已在导航中: 强制停止
         Motor_Enable_PID(0);
         PID_Enable(&angle_pid_yaw, 0);
+        PID_Enable(&angle_pid_gyro, 0);
         target_vx = 0.0f; target_vy = 0.0f;
         bcn_nav_on = 0;
         bcn_rem_i = 0.0f; bcn_go_first = 1;
@@ -268,6 +270,7 @@ static void bcn_start_idle(void)
     target_vx = 0.0f; target_vy = 0.0f;
     Motor_Enable_PID(1);
     PID_Reset(&angle_pid_yaw);   PID_Enable(&angle_pid_yaw, 1);
+    PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
     g_pos_x = 0.0f; g_pos_y = 0.0f;  // 清零实时位置追踪
     go_center = 0;
     printf("INAV: PID on, pos zeroed, waiting M key...\n");
@@ -283,6 +286,7 @@ static void bcn_start_nav(void)
     target_vx = 0.0f; target_vy = 0.0f;
     Motor_Enable_PID(1);
     PID_Reset(&angle_pid_yaw);   PID_Enable(&angle_pid_yaw, 1);
+    PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
     bcn_enc0[0] = motor_L1.total_encoder;
     bcn_enc0[1] = motor_L2.total_encoder;
     bcn_enc0[2] = motor_R1.total_encoder;

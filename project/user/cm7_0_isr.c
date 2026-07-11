@@ -68,9 +68,25 @@ void pit0_ch0_isr()
     }
 
     if (angle_pid_yaw.Enable) {
-        float yaw = My_Imu660ra_GetYaw();
+        // ---- 漂移补偿: 外环积分方向=漂移方向, 极慢转移到yaw修正量 ----
+        // yaw_drift_comp 会逐渐"学会"当前的漂移累积量, 从读数中扣除
+        // PID不再需要用物理旋转去对抗一个测量误差
+        static float yaw_drift_comp = 0.0f;
+        yaw_drift_comp -= angle_pid_yaw.err_int_k_1 * 0.0005f;
+
+        float yaw = My_Imu660ra_GetYaw() - yaw_drift_comp;
         PID_SetTarget(&angle_pid_yaw, angle_target);
-        float omega_des = PID_Calculate(&angle_pid_yaw, yaw);   // 角度PID直接输出 deg/s
+        float omega_target = PID_Calculate(&angle_pid_yaw, yaw);
+
+        // 积分已部分转移至漂移补偿, 缓慢衰减避免双重计数
+        angle_pid_yaw.err_int_k_1 *= 0.999f;
+
+        // 内环: 角速度闭环 (陀螺低通反馈)
+        PID_SetTarget(&angle_pid_gyro, omega_target);
+        static float gz_filt = 0.0f;
+        gz_filt = 0.8f * gz_filt + 0.2f * imu660_gz;
+        float omega_des = PID_Calculate(&angle_pid_gyro, gz_filt);
+
         float omega_rad = omega_des * (PI / 180.0f);
         Mecanum_Move(target_vx, target_vy, omega_rad);
     } else {

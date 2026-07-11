@@ -74,7 +74,8 @@ extern motor_t motor_R1;  // 右前轮
 extern motor_t motor_R2;  // 右后轮
 extern volatile int Start_Pid_Flag;
 extern volatile int Stop_Pid_Flag;
-extern PID angle_pid_yaw;  // 偏航角(Yaw) PID (纯PI, 直接输出角速度)
+extern PID angle_pid_yaw;   // 角度外环: 角度误差→目标角速度
+extern PID angle_pid_gyro;  // 角速度内环: 陀螺反馈闭环, Ki自动吃零偏
 extern float target_vy;
 extern float target_vx;   // 直线运动时的目标速度（前进为正，后退为负）
 extern float angle_target;   // 角度环目标角度（度）

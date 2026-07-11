@@ -22,6 +22,7 @@ void KeyTask_Init(void)
 {
     Motor_Enable_PID(1);
     PID_Reset(&angle_pid_yaw);   PID_Enable(&angle_pid_yaw, 1);
+    PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
     My_Imu660ra_ResetYaw();
     MagYaw_Reset();                      // 磁力计零点 = 当前车头方向
     angle_target = 0.0f;
@@ -48,6 +49,7 @@ void KeyTask_Handler(void)
     {
         Motor_Enable_PID(0);
         PID_Enable(&angle_pid_yaw, 0);
+        PID_Enable(&angle_pid_gyro, 0);
         pid_started = 0;
 
         Motor_SetSpeed(&motor_L1, 0, MotorL1_Turn, MotorL1_Pwm);

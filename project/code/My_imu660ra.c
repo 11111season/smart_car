@@ -118,15 +118,17 @@ void My_Imu660ra_Update(void)
     // ��ͨ�˲���ϵ��0.1���ɸ��ݲ������ڵ�����
     gyro_z_lpf = 0.9f * gyro_z_lpf + 0.1f * imu660_gz;
 
-    // ��ֹ��⣺�����˲�ֵ��С��0.5��/s �ҳ���50�����ڣ�����10ms���ڣ���500ms��
-    const float threshold = 0.5f;
+    // 静止检测: 三轴角速度均 < 0.2°/s 且持续 15 周期 (0.15s), 学习陀螺零偏
+    const float threshold = 0.2f;
     if (fabsf(gyro_z_lpf) < threshold && fabsf(imu660_gy) < threshold && fabsf(imu660_gx) < threshold)
     {
-        if (still_cnt < 50) still_cnt++;
-        if (still_cnt >= 50)
+        if (still_cnt < 15) still_cnt++;
+        if (still_cnt >= 15)
         {
-            // ��ֹ�㹻�ã�������ƫ��ѧϰ��0.01��
-            gyro_z_offset += (gyro_z_lpf - gyro_z_offset) * 0.01f;
+            // 静止足够久, 当前滤波读数即为残余零偏, 激进学习 (12%/周期)
+            gyro_z_offset += (gyro_z_lpf - gyro_z_offset) * 0.12f;
+            if (gyro_z_offset >  2.0f) gyro_z_offset =  2.0f;
+            if (gyro_z_offset < -2.0f) gyro_z_offset = -2.0f;
         }
     }
     else
@@ -134,33 +136,8 @@ void My_Imu660ra_Update(void)
         still_cnt = 0;
     }
 
-    // ����ƫ�������ٶ�
+    // 扣除在线零偏后的角速度
     float gz_corrected = imu660_gz - gyro_z_offset;
-//    // --- ��ֹ����붯̬Ư�Ʋ���
-//    static float drift_rate = 0.0f;          // ���Ƶ�Ư���� (��/s)
-//    static uint16_t stationary_count = 0;
-//    const float movement_threshold = 0.1f;    // �˶���ֵ
-//    const uint16_t stationary_samples = 100;  // ��ֹ�ж���������10ms������Լ1�룩
-//    const float drift_learning_rate = 0.005f; // ѧϰ����
-//
-//    if (fabsf(imu660_gx) < movement_threshold && fabsf(imu660_gy) < movement_threshold && fabsf(imu660_gz) < movement_threshold)
-//    {
-//        stationary_count++;
-//        if (stationary_count >= stationary_samples)
-//        {
-//            // ��ֹ�㹻��ʱ�䣬�õ�ǰ gz ����Ư���ʣ���Ϊ��ʵ�˶�Ϊ0��
-//            drift_rate += (imu660_gz - drift_rate) * drift_learning_rate;
-//            if (drift_rate > 2.0f) drift_rate = 2.0f;
-//            if (drift_rate < -2.0f) drift_rate = -2.0f;
-//        }
-//    }
-//    else
-//    {
-//        stationary_count = 0;
-//    }
-//
-//    // ��Ư�����������ٶȣ���ѡ����У׼�㹻��Ҳ���Բ�������
-//    float imu_gz_corrected = imu660_gz - drift_rate;
 
     // --- �����ǻ��ֵõ��Ƕ����� ---
     float imu660_yaw_g   = imu660_yaw   + gz_corrected * dt;

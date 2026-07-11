@@ -29,8 +29,9 @@ motor_t motor_L2;       // 左后轮
 motor_t motor_R1;       // 右前轮
 motor_t motor_R2;       // 右后轮
 
-// 角度环PID实例
-PID angle_pid_yaw;      // 偏航角(Yaw)控制 (纯PI, 直接输出角速度 → Mecanum_Move)
+// 角度串级PID实例
+PID angle_pid_yaw;      // 外环: 角度误差 → 目标角速度 (deg/s), 温和P+慢I
+PID angle_pid_gyro;     // 内环: 角速度闭环 (陀螺反馈), Kp阻尼+Ki自动吃零偏
 
 // 底盘运动目标速度
 float target_vx  = 0.0f;   // X方向目标速度 (m/s), 前进为正
@@ -94,11 +95,17 @@ static uint8_t slip_counter = 0;
 //-------------------------------------------------------------------------------------------------------------------
 void Angle_Init(void)
 {
-    // 角度环: PI控制 Kp=3.5 Ki=0.1 (角度误差→目标角速度 deg/s, 直接送Mecanum_Move)
-    PID_Init(&angle_pid_yaw, 3.5f, 0.0f, 0.0f);
+    // ---- 角度外环: Kp=5修正角度 + Ki=0.08消除稳态残差 ----
+    PID_Init(&angle_pid_yaw, 5.0f, 0.08f, 0.0f);
     PID_SetLimit(&angle_pid_yaw, 100.0f, -100.0f);
-    PID_SetIntegralLimit(&angle_pid_yaw, 20.0f);
+    PID_SetIntegralLimit(&angle_pid_yaw, 80.0f);
     PID_Enable(&angle_pid_yaw, 0);
+
+    // ---- 角速度内环: 纯P阻尼, 不积分 (避免与外环Ki拔河) ----
+    PID_Init(&angle_pid_gyro, 0.6f, 0.1f, 0.0f);
+    PID_SetLimit(&angle_pid_gyro, 100.0f, -100.0f);
+    PID_SetIntegralLimit(&angle_pid_gyro, 0.0f);
+    PID_Enable(&angle_pid_gyro, 0);
 }
 
 //-------------------------------------------------------------------------------------------------------------------
