@@ -16,7 +16,7 @@
         <MemConfigValue>D:\Program Files\IAR Systems\Embedded Workbench 9.2\arm\config\debugger\Infineon\CYT4BB_M7.ddf</MemConfigValue>
     </PlDriver>
     <Jet>
-        <JetConnSerialNo>ZF-WLFS-CMSIS-DAP:80942004-B8F862D61388</JetConnSerialNo>
+        <JetConnSerialNo>ZF-WLFS-CMSIS-DAP:809810C0-B8F862DC5054</JetConnSerialNo>
         <JetConnFoundProbes />
         <DisableInterrupts>0</DisableInterrupts>
         <LeaveRunning>0</LeaveRunning>

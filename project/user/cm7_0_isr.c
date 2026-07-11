@@ -45,10 +45,22 @@ extern vision_share_t g_vision_share;
 
 static uint32 last_frame_id = 0;
 
-static void car_send_by_vision(const vision_share_t *vision)
+// 视觉坐标 EMA 平滑（降低逐帧抖动）
+#define VISION_SMOOTH_ALPHA  0.3f   // 0=完全平滑, 1=无平滑, 越小越平滑
+
+static float filt_err_x = 0, filt_err_y = 0;
+static float filt_car_x = 0, filt_car_y = 0;
+static uint8 filt_inited = 0;
+
+static void car_send_by_vision(void)
 {
-    HC06_SendVisionError(vision->err_x, vision->err_y);
+    HC06_SendVisionError((int16)filt_err_x, (int16)filt_err_y);
 }
+
+// 获取滤波后的小车坐标（供 control.c 位置环使用）
+float get_filtered_car_x(void) { return filt_car_x; }
+float get_filtered_car_y(void) { return filt_car_y; }
+
 static void process_vision_frame(void)
 {
     SCB_CleanInvalidateDCache_by_Addr((uint32_t *)&g_vision_share, sizeof(g_vision_share));
@@ -57,7 +69,25 @@ static void process_vision_frame(void)
         return;
 
     last_frame_id = g_vision_share.frame_id;
-    car_send_by_vision(&g_vision_share);
+
+    // 首次初始化
+    if (!filt_inited) {
+        filt_err_x = g_vision_share.err_x;
+        filt_err_y = g_vision_share.err_y;
+        filt_car_x = g_vision_share.car_x;
+        filt_car_y = g_vision_share.car_y;
+        filt_inited = 1;
+    }
+
+    // EMA 低通平滑
+    float a = VISION_SMOOTH_ALPHA;
+    float b = 1.0f - a;
+    filt_err_x = filt_err_x * b + g_vision_share.err_x * a;
+    filt_err_y = filt_err_y * b + g_vision_share.err_y * a;
+    filt_car_x = filt_car_x * b + g_vision_share.car_x * a;
+    filt_car_y = filt_car_y * b + g_vision_share.car_y * a;
+
+    car_send_by_vision();
 }
 
 // **************************** PIT 中断函数 ****************************

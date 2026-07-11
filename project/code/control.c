@@ -17,6 +17,10 @@
 #pragma location = VISION_SHARE_ADDR
 vision_share_t g_vision_share;
 
+// 滤波后的小车坐标 (cm7_0_isr.c 中 EMA 平滑, 供位置环使用)
+extern float get_filtered_car_x(void);
+extern float get_filtered_car_y(void);
+
 // 定义一个视觉像素误差到期望速度的转换系数（根据实际调试缩放，初始可以给个小值）
 #define PIXEL_TO_VEL_SCALE       0.02f   // 像素误差 → 速度目标
 #define BEACON_HOLD_FRAMES_MAX   100     // 丢失后保持帧数 (约500ms@200Hz)
@@ -220,11 +224,11 @@ void stabilization(float dt)
     {
         // 测量值：屏幕中心 = 无人机自身位置
      
-        // 目标值：视觉识别的小车坐标
+        // 目标值：视觉识别的小车坐标（EMA 滤波平滑）
         if(g_vision_share.car_found)
         {
-            PIDPosX.target = (float)g_vision_share.car_x;
-            PIDPosY.target = (float)g_vision_share.car_y;
+            PIDPosX.target = get_filtered_car_x();
+            PIDPosY.target = get_filtered_car_y();
         }
         else
         {

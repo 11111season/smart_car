@@ -379,19 +379,43 @@ static uint8 find_v_from_hough(const HoughLine *lines, uint8 line_cnt, Blob *b)
             uint32 max_v_dist = (uint32)(b->width + b->height);  // 最多允许宽+高
             if (v_dist2 > (float)(max_v_dist * max_v_dist)) continue;
 
-            // 用 blob 实际底部作为 y_ref, 比固定用 CAMERA_H-1 更鲁棒
-            // 因为 V 形碎片可能在图像任意位置, 用 blob 底部自适应
-            float y_ref = (float)(b->cy + b->oheight / 2);
-            if (y_ref < (float)ay) y_ref = (float)ay + 2.0f;   // 确保底边在顶点下方
-            if (y_ref >= (float)CAMERA_H) y_ref = (float)CAMERA_H - 1.0f;
+            // 底边端点: 沿霍夫线从顶点向下追踪, 在 blob 包围盒内找最远的边缘点
+            // 避免原来用固定 y_ref + 线方程延伸导致端点跑到空白区域
+            float bb_left  = (float)(b->cx - b->width / 2);
+            float bb_right = (float)(b->cx + b->width / 2);
+            float bb_top   = (float)(b->cy - b->height / 2);
+            float bb_bot   = (float)(b->cy + b->height / 2);
 
-            float bx = (float)lines[i].rho / cos1 - y_ref * sin1 / cos1;
-            float cx = (float)lines[j].rho / cos2 - y_ref * sin2 / cos2;
+            // 线1方向: 沿直线方向 (法线旋转90°), 确保向下走
+            float dx1 = -sin1, dy1 = cos1;
+            if (dy1 < 0) { dx1 = -dx1; dy1 = -dy1; }
+            float bx = ax, by = ay;
+            for (float t = 0; t < 60; t += 1.0f) {
+                float x = ax + dx1 * t;
+                float y = ay + dy1 * t;
+                if (x < bb_left || x > bb_right || y < bb_top || y > bb_bot) break;
+                int ix = (int)x, iy = (int)y;
+                if (ix >= 0 && ix < CAMERA_W && iy >= 0 && iy < CAMERA_H) {
+                    if (image_buffer[iy][ix] == 255) { bx = x; by = y; }
+                }
+            }
 
-            // 限制在图像范围内
-            if (bx < 0) bx = 0; if (bx >= (float)CAMERA_W) bx = (float)CAMERA_W - 1;
-            if (cx < 0) cx = 0; if (cx >= (float)CAMERA_W) cx = (float)CAMERA_W - 1;
+            // 线2方向: 沿直线方向 (法线旋转90°), 确保向下走
+            float dx2 = -sin2, dy2 = cos2;
+            if (dy2 < 0) { dx2 = -dx2; dy2 = -dy2; }
+            float cx = ax, cy = ay;
+            for (float t = 0; t < 60; t += 1.0f) {
+                float x = ax + dx2 * t;
+                float y = ay + dy2 * t;
+                if (x < bb_left || x > bb_right || y < bb_top || y > bb_bot) break;
+                int ix = (int)x, iy = (int)y;
+                if (ix >= 0 && ix < CAMERA_W && iy >= 0 && iy < CAMERA_H) {
+                    if (image_buffer[iy][ix] == 255) { cx = x; cy = y; }
+                }
+            }
 
+            // 使用追踪到的实际端点位置
+            float y_ref = (by + cy) * 0.5f;  // 两条臂底部 y 的平均值
             float mid_x = (bx + cx) * 0.5f;
             float mid_y = y_ref;
 
@@ -399,14 +423,15 @@ static uint8 find_v_from_hough(const HoughLine *lines, uint8 line_cnt, Blob *b)
             float base_w = fabsf(bx - cx);
             if (base_w < 5.0f || base_w > (float)CAMERA_W * 0.8f) continue;
 
-            // 臂长检查: 顶点到底边端点的距离
-            float arm1 = sqrtf((ax - bx) * (ax - bx) + (ay - y_ref) * (ay - y_ref));
-            float arm2 = sqrtf((ax - cx) * (ax - cx) + (ay - y_ref) * (ay - y_ref));
-            if (arm1 < (float)CAR_MARK_MIN_ARM_LEN || arm2 < (float)CAR_MARK_MIN_ARM_LEN)
-                continue;
+            // 臂长检查: 顶点到实际追踪到的底边端点
+            float arm1 = sqrtf((ax - bx) * (ax - bx) + (ay - by) * (ay - by));
+            float arm2 = sqrtf((ax - cx) * (ax - cx) + (ay - cy) * (ay - cy));
+            // 臂长检查 (暂时注释)
+            // if (arm1 < (float)CAR_MARK_MIN_ARM_LEN || arm2 < (float)CAR_MARK_MIN_ARM_LEN)
+            //     continue;
 
-            // 顶点夹角 (余弦定理)
-            float dot = (bx - ax) * (cx - ax) + (y_ref - ay) * (y_ref - ay);
+            // 顶点夹角 (余弦定理) — 用实际追踪到的底边端点
+            float dot = (bx - ax) * (cx - ax) + (by - ay) * (cy - ay);
             float cos_a = dot / (arm1 * arm2);
             if (cos_a > 1.0f) cos_a = 1.0f;
             if (cos_a < -1.0f) cos_a = -1.0f;
@@ -442,9 +467,9 @@ static uint8 find_v_from_hough(const HoughLine *lines, uint8 line_cnt, Blob *b)
             b->marker_vertex_x  = uax;
             b->marker_vertex_y  = uay;
             b->marker_base1_x   = ubx;
-            b->marker_base1_y   = (uint16)(y_ref + 0.5f);
+            b->marker_base1_y   = (uint16)(by + 0.5f);
             b->marker_base2_x   = ucx;
-            b->marker_base2_y   = (uint16)(y_ref + 0.5f);
+            b->marker_base2_y   = (uint16)(cy + 0.5f);
             b->marker_base_mid_x = umx;
             b->marker_base_mid_y = umy;
             b->marker_base_len   = (uint16)(base_w + 0.5f);
@@ -452,8 +477,25 @@ static uint8 find_v_from_hough(const HoughLine *lines, uint8 line_cnt, Blob *b)
             b->marker_angle_deg  = (uint16)(angle_deg + 0.5f);
             b->marker_arm1_len   = (uint16)(arm1 + 0.5f);
             b->marker_arm2_len   = (uint16)(arm2 + 0.5f);
-            b->marker_heading    = atan2f((float)((int32)uay - (int32)umy),
-                                          (float)((int32)uax - (int32)umx));
+            // 验证朝向：V形底边（宽端）像素多，质心更靠近底边
+            // 如果顶点比底边更靠近质心，说明朝向反了，翻转 180°
+            {
+                float dvx = (float)uax - (float)b->cx;
+                float dvy = (float)uay - (float)b->cy;
+                float dbx = (float)umx - (float)b->cx;
+                float dby = (float)umy - (float)b->cy;
+                if ((dbx*dbx + dby*dby) > (dvx*dvx + dvy*dvy))
+                {
+                    // 底边比顶点更远 → 朝向反了
+                    b->marker_heading = atan2f((float)((int32)umy - (int32)uay),
+                                               (float)((int32)umx - (int32)uax));
+                }
+                else
+                {
+                    b->marker_heading = atan2f((float)((int32)uay - (int32)umy),
+                                               (float)((int32)uax - (int32)umx));
+                }
+            }
 
             // 给一个保底车标分, 确保软判决系统能正确分类
             // 如果已有 raw_marker_score 则取较大值
@@ -668,7 +710,7 @@ static void compute_car_marker_feature(Blob *b, Point *pts, uint32 count)
     // 验证通过条件
     uint8 bfs_ok = 1;
     if(base_len < (float)CAR_MARK_MIN_BASE_LEN) bfs_ok = 0;
-    else if(arm1 < (float)CAR_MARK_MIN_ARM_LEN || arm2 < (float)CAR_MARK_MIN_ARM_LEN) bfs_ok = 0;
+    //  else if(arm1 < (float)CAR_MARK_MIN_ARM_LEN || arm2 < (float)CAR_MARK_MIN_ARM_LEN) bfs_ok = 0;  // 臂长检查 (暂时注释)
     else if(best_height < (float)CAR_MARK_MIN_HEIGHT) bfs_ok = 0;
     else if(angle_deg_f < (float)CAR_MARK_MIN_ANGLE_DEG || angle_deg_f > (float)CAR_MARK_MAX_ANGLE_DEG) bfs_ok = 0;
 
@@ -1330,14 +1372,13 @@ static void pair_v_fragments(void)
 
             float arm1 = sqrtf((ax - bx)*(ax - bx) + (ay - y_ref)*(ay - y_ref));
             float arm2 = sqrtf((ax - cx)*(ax - cx) + (ay - y_ref)*(ay - y_ref));
-            if(arm1 < (float)CAR_MARK_MIN_ARM_LEN || arm2 < (float)CAR_MARK_MIN_ARM_LEN)
-            {
-#if DEBUG_SCORES
-                printf("PAIR: fail arm1=%.0f arm2=%.0f (min=%d)\n",
-                       (double)arm1, (double)arm2, CAR_MARK_MIN_ARM_LEN);
-#endif
-                continue;
-            }
+            // 臂长检查 (暂时注释)
+            // if(arm1 < (float)CAR_MARK_MIN_ARM_LEN || arm2 < (float)CAR_MARK_MIN_ARM_LEN)
+            // {
+            //     printf("PAIR: fail arm1=%.0f arm2=%.0f (min=%d)\n",
+            //            (double)arm1, (double)arm2, CAR_MARK_MIN_ARM_LEN);
+            //     continue;
+            // }
 
             float dot = (bx - ax)*(cx - ax) + (y_ref - ay)*(y_ref - ay);
             float cos_a = dot / (arm1 * arm2);
