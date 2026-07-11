@@ -206,8 +206,10 @@ void HC06_Task(void)
 //        }
     }
     
-    Update_TargetFromButtons();
-    if (!go_center) { if (fabsf(target_vx) > 0.005f || fabsf(target_vy) > 0.005f) { bcn_nav_vx = target_vx; bcn_nav_vy = target_vy; bcn_nav_angle = 0.0f; bcn_nav_on = 1; } else { bcn_nav_on = 0; } }
+    // 无人机控制模式: 跳过手机蓝牙速度计算, target_vx/vy 由 ISR 中 PositionControl_Update() 设置
+    // Update_TargetFromButtons();
+    // 无人机控制模式: bcn_nav 仅由 InertialNav_Update() 管理(go_center/信标导航)
+    // if (!go_center) { if (fabsf(target_vx) > 0.005f || fabsf(target_vy) > 0.005f) { bcn_nav_vx = target_vx; bcn_nav_vy = target_vy; bcn_nav_angle = 0.0f; bcn_nav_on = 1; } else { bcn_nav_on = 0; } }
     // Update_TargetFromButtons();
 //    static uint64_t last_print_time = 0;
 //    if (angle_pid_yaw.Enable) {
@@ -286,24 +288,28 @@ void Bluetooth_Command_Handler(char cmd)
     uint64_t now = time_us;
 
     if (cmd == 'F') { // ǰ��
-        speed_fwd += SPEED_STEP;
-        if (speed_fwd > SPEED_U * SPEED_MAX) speed_fwd = SPEED_U * SPEED_MAX;
-        time_fwd = now;
+        // 无人机控制: 禁用F键
+        // speed_fwd += SPEED_STEP;
+        // if (speed_fwd > SPEED_U * SPEED_MAX) speed_fwd = SPEED_U * SPEED_MAX;
+        // time_fwd = now;
     }
     else if (cmd == 'B') { // ����
-        speed_bwd += SPEED_STEP;
-        if (speed_bwd > SPEED_MAX) speed_bwd = SPEED_MAX;
-        time_bwd = now;
+        // 无人机控制: 禁用B键
+        // speed_bwd += SPEED_STEP;
+        // if (speed_bwd > SPEED_MAX) speed_bwd = SPEED_MAX;
+        // time_bwd = now;
     }
     else if (cmd == 'L') { // ���ƣ�����ת��
-        speed_left += SPEED_STEP;
-        if (speed_left > SPEED_U * SPEED_MAX) speed_left = SPEED_U * SPEED_MAX;
-        time_left = now;
+        // 无人机控制: 禁用L键
+        // speed_left += SPEED_STEP;
+        // if (speed_left > SPEED_U * SPEED_MAX) speed_left = SPEED_U * SPEED_MAX;
+        // time_left = now;
     }
     else if (cmd == 'R') { // ���ƣ�����ת��
-        speed_right += SPEED_STEP;
-        if (speed_right > SPEED_MAX) speed_right = SPEED_MAX;
-        time_right = now;
+        // 无人机控制: 禁用R键
+        // speed_right += SPEED_STEP;
+        // if (speed_right > SPEED_MAX) speed_right = SPEED_MAX;
+        // time_right = now;
     }
     else if (cmd == 'M') { speed_fwd = speed_bwd = speed_left = speed_right = 0.0f; go_center = 1; printf("GO CENTER!\n"); }
 //    else if (cmd == 'M') {   // 原模式切换已废弃, 改为上面go_center
