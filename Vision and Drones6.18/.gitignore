@@ -1,0 +1,35 @@
+# Windows
+desktop.ini
+Thumbs.db
+
+# Local editor/assistant config
+.claude/
+.cursor/
+
+# Archives
+*.zip
+*.rar
+*.7z
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# IAR generated build outputs
+project/iar/project_config/**/Obj/
+project/iar/project_config/**/List/
+project/iar/project_config/**/Exe/
+project/iar/Debug_m7_0/
+project/iar/Debug_m7_1/
+*.hex
+*.out
+*.sim
+*.map
+*.lst
+*.dep
+
+# IAR user/session generated files
+*.dbgdt
+*.browse
+*.pbd
