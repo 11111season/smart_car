@@ -1,0 +1,24 @@
+# IAR build output
+project/iar/Debug*/
+project/iar/Release*/
+project/iar/settings/
+
+# Object files
+*.o
+*.obj
+*.pbi
+*.pbd
+*.browse
+
+# IAR generated
+*.ewt
+*.dep
+*.ewp.xm
+*.xcl
+
+# IDE temp
+.vs/
+*.suo
+*.user
+.DS_Store
+Thumbs.db
