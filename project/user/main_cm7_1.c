@@ -7,7 +7,7 @@
 // 切换宏值来选择显示内容:
 //   0 = 飞控数据模式 (姿态/电机/光流等, 原注释部分)
 //   1 = 视觉调试模式 (视觉识别结果 + 霍夫参数)
-#define IPS_DISPLAY_MODE    1   // ← 修改此值切换模式
+#define IPS_DISPLAY_MODE    0   // ← 修改此值切换模式
 
 int main(void)
 {

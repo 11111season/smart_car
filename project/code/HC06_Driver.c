@@ -80,10 +80,10 @@ void HC06_SendCmd(const char *str)
     hc06_tx_string(str);
 }
 
-void HC06_SendVisionError(int16 err_x, int16 err_y)
+void HC06_SendVisionError(int16 err_x, int16 err_y, uint8_t flag)
 {
     char buf[32];
-    sprintf(buf, "#%d,%d$", err_x, err_y);
+    sprintf(buf, "#%d,%d,%d$", err_x, err_y, flag);
     hc06_tx_string(buf);
 }
 

@@ -14,11 +14,11 @@ void TOF_init(void)
     if (0 == ret)
     {
         vl53l5cx_start_ranging();
-//        printf("  [TOF] VL53L5CX started at 30Hz\r\n");
+        printf("  [TOF] VL53L5CX started at 30Hz\r\n");
     }
     else
     {
-//        printf("  [TOF] VL53L5CX init FAILED!\r\n");
+        printf("  [TOF] VL53L5CX init FAILED!\r\n");
     }
     
     // 状态初始化

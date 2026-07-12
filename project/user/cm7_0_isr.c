@@ -54,7 +54,8 @@ static uint8 filt_inited = 0;
 
 static void car_send_by_vision(void)
 {
-    HC06_SendVisionError((int16)filt_err_x, (int16)filt_err_y);
+    uint8 flag = g_vision_share.target_found ? 1 : 2;
+    HC06_SendVisionError((int16)filt_err_x, (int16)filt_err_y, flag);
 }
 
 // 获取滤波后的小车坐标（供 control.c 位置环使用）

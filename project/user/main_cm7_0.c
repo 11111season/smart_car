@@ -3,95 +3,59 @@
 #include "control.h"
 #include "battery.h"
 #include "VL53L5CX.h"
-
-#define CAR_CMD_STOP         "S!"
+#include "PID.h"
+#include "INIT.h"
 
 extern uint8_t out_flag;
 extern flight_state_e flight_state;
-extern vision_share_t g_vision_share;
+extern _PID_param_st *(pPidObject[]);
 
-// HC06 帧解析状态
-typedef enum {
-    FRAME_WAIT_START,
-    FRAME_RECV_DATA,
-} frame_state_t;
-
-static frame_state_t frame_state = FRAME_WAIT_START;
-static uint8_t frame_buffer[8];
-static uint8_t frame_idx = 0;
-
-// 解析完整帧 "#N$" → 提取数值 N
-static void ParseFrameData(uint8_t *buf, uint8_t len)
+// 处理来自小车的指令: #1$=起浆, #2$=PID控制, #3$=停止
+static void process_drone_command(uint8_t cmd)
 {
-    uint8_t val = 0;
-    for(uint8_t i = 0; i < len; i++)
-    {
-        if(buf[i] >= '0' && buf[i] <= '9')
-            val = val * 10 + (buf[i] - '0');
-        else
-            break;
-    }
+    static uint8_t unlocked = 0;        // #1 解锁标记
+    static uint8_t last_cmd = 0;        // 上一次指令
 
-    // 直接执行命令
-    switch(val)
+    printf("[CMD] recv #%d$ → ", cmd);
+
+    switch(cmd)
     {
         case 1:     // #1$ → 起浆(解锁)
+            unlocked = 1;
             out_flag = 1;
             flight_state = STATE_UNLOCK;
+            printf("UNLOCK (out=1)\r\n");
             break;
 
-        case 2:     // #2$ → 起飞
+        case 2:     // #2$ → 开启PID控制
+            if (!unlocked) {
+                printf("ignored (not unlocked yet)\r\n");
+                break;
+            }
+            if (last_cmd == 2) {
+                // 重复 #2：PID 全部清零，重新锁偏航
+                PID_Rest_Init(pPidObject, 12);
+                PIDYaw.target = eulerAngle.yaw;
+                printf("PID reset, yaw=%.1f (re-trigger #2)\r\n", eulerAngle.yaw);
+                break;
+            }
             out_flag = 2;
             flight_state = STATE_TAKEOFF;
+            printf("TAKEOFF (out=2)\r\n");
             break;
 
-        case 3:     // #3$ → 锁定/停止
+        case 3:     // #3$ → 停止输出
+            unlocked = 0;
             out_flag = 0;
             flight_state = STATE_LOCK;
-            HC06_SendCmd(CAR_CMD_STOP);
+            printf("LOCK (out=0, unlocked=0)\r\n");
             break;
 
         default:
+            printf("unknown cmd=%d\r\n", cmd);
             break;
     }
-}
-
-static void process_hc06_command(void)
-{
-    uint8_t data;
-
-    // 从 HC06 FIFO 读取并解析
-    while(fifo_read_element(&hc06_rx_fifo, &data, FIFO_READ_AND_CLEAN) == FIFO_SUCCESS)
-    {
-        if(frame_state == FRAME_WAIT_START && data == '#')
-        {
-            frame_state = FRAME_RECV_DATA;
-            frame_idx = 0;
-            continue;
-        }
-
-        if(frame_state == FRAME_RECV_DATA)
-        {
-            if(data == '$')
-            {
-                if(frame_idx > 0)
-                {
-                    frame_buffer[frame_idx] = '\0';
-                    ParseFrameData(frame_buffer, frame_idx);
-                }
-                frame_state = FRAME_WAIT_START;
-                continue;
-            }
-            else
-            {
-                if(frame_idx < sizeof(frame_buffer) - 1)
-                {
-                    frame_buffer[frame_idx++] = data;
-                }
-                continue;
-            }
-        }
-    }
+    last_cmd = cmd;
 }
 
 
@@ -148,12 +112,18 @@ int main(void)
 //                  (double)mag_calib[0], (double)mag_calib[1], (double)mag_calib[2]);
 //       }
        //printf("%d,%d,%d\r\n", qmc5883l_mag_x, qmc5883l_mag_y, qmc5883l_mag_z);
-      //printf("%5d,%5d,%5d,%5d\r\n",m1,m2,m3,m4);
+      printf("%5d,%5d,%5d,%5d\r\n",m1,m2,m3,m4);
 //    printf("%5f,%5f,%5f,%5f,%5f,%5f\r\n",PIDPosX.out,PIDPosY.out,world_data.vx,world_data.vy,(float)g_vision_share.car_x,(float)g_vision_share.car_y);
 //    printf("%5f,%5f,%5f,%5f\r\n",imu_data.gyro_x_pt1,imu_data.gyro_y_pt1,eulerAngle.roll,eulerAngle.pitch);
       //printf("%5f,%5f,%5f,%5f\r\n",PIDHeight.out,PIDVelH.out,world_data.vz,alt.target_height);
   //    printf("%5f,%5f,%5f\r\n",qmc5883l_mag_x_gauss,qmc5883l_mag_y_gauss);
-      process_hc06_command();
+      HC06_Task();                        // 解析来自小车的 #N$ 指令
+
+      {
+          uint8_t cmd = HC06_GetCmd();    // 获取指令
+          if(cmd) process_drone_command(cmd);
+      }
+
       small_driver_set_duty(m1, m2, m3, m4);
     }
 }

@@ -14,7 +14,10 @@
 // 分类由软判决评分系统动态决策
 
 // 调试开关：0=关闭, 1=每帧每个blob打印分数
-#define DEBUG_SCORES            1
+#define DEBUG_SCORES            0
+
+// 调试开关：0=关闭, 1=每帧打印 #err_x,err_y,n$ HC06 数据帧
+#define DEBUG_HC06_FRAME        0
 
 #define HEADING_FILTER_ALPHA     0.7f
 

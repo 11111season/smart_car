@@ -5,7 +5,7 @@
 
 void HC06_Init(uint32 baudrate);
 void HC06_SendCmd(const char *cmd);
-void HC06_SendVisionError(int16 err_x, int16 err_y);
+void HC06_SendVisionError(int16 err_x, int16 err_y, uint8_t flag);
 void HC06_UART_RX_Handler(void);
 uint8_t HC06_GetCmd(void);
 

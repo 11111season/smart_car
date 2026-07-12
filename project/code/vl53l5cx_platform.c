@@ -130,13 +130,13 @@ uint8_t VL53L5CX_Reset_Sensor(VL53L5CX_Platform *p_platform)
     (void)p_platform; /* Platform struct not needed for pin access */
 
     gpio_low(VL53L5CX_PWR_EN_PIN);
-    system_delay_ms(2);
+    system_delay_ms(10);
     gpio_high(VL53L5CX_PWR_EN_PIN);
-    system_delay_ms(2);
+    system_delay_ms(10);
     gpio_low(VL53L5CX_LPn_PIN);
-    system_delay_ms(2);
+    system_delay_ms(10);
     gpio_high(VL53L5CX_LPn_PIN);
-    system_delay_ms(50);
+    system_delay_ms(200);
 
     return 0;
 }

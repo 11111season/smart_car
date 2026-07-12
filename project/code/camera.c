@@ -1835,6 +1835,14 @@ void camera_process(void)
         g_vision_share.frame_id++;
         SCB_CleanInvalidateDCache_by_Addr((uint32_t *)&g_vision_share, sizeof(g_vision_share));
 
+        // 打印发送给小车的数据帧: #err_x,err_y,n$  (调试用, 默认关闭)
+        #if DEBUG_HC06_FRAME
+        printf("#%d,%d,%d$\r\n",
+               g_vision_share.err_x,
+               g_vision_share.err_y,
+               g_vision_share.target_found ? 1 : 2);
+        #endif
+
         // 调试输出：小车与信标的像素误差（仅在有识别时输出）
        //if(g_vision_share.target_found || g_vision_share.car_found)
        //{

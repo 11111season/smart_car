@@ -116,27 +116,35 @@ uint8 vl53l5cx_init(void)
 
     // 4. 硬件复位（PWR_EN + LPn 时序）
     VL53L5CX_Reset_Sensor(&(vl53l5cx_dev.platform));
-//    printf("  [VL53L5CX] Reset done\r\n");
+    printf("  [VL53L5CX] Reset done\r\n");
 
     // 5. 检查传感器是否在线（ST API）
     status = vl53l5cx_is_alive(&vl53l5cx_dev, &is_alive);
-//    printf("  [VL53L5CX] Is alive: %d (status=%d)\r\n", is_alive, status);
+    printf("  [VL53L5CX] Is alive: %d (status=%d)\r\n", is_alive, status);
     if (!is_alive || status)
     {
-//        printf("  [VL53L5CX] Sensor not detected!\r\n");
+        // 读取实际 device_id 和 revision_id，帮助定位
+        uint8_t dbg_dev_id, dbg_rev_id;
+        VL53L5CX_WrByte(&(vl53l5cx_dev.platform), 0x7fff, 0x00);
+        VL53L5CX_RdByte(&(vl53l5cx_dev.platform), 0, &dbg_dev_id);
+        VL53L5CX_RdByte(&(vl53l5cx_dev.platform), 1, &dbg_rev_id);
+        VL53L5CX_WrByte(&(vl53l5cx_dev.platform), 0x7fff, 0x02);
+        printf("  [VL53L5CX] Read device_id=0x%02X (expected 0xF0), rev_id=0x%02X (expected 0x02)\r\n",
+               dbg_dev_id, dbg_rev_id);
+        printf("  [VL53L5CX] Sensor not detected!\r\n");
         return 1;
     }
 
     // 6. 初始化传感器（加载固件+配置）— 这是最关键的一步！
     //    耗时约几百毫秒，包含 84KB 固件下载、NVM 校准、串扰补偿等
     status = st_vl53l5cx_init(&vl53l5cx_dev);
-//    printf("  [VL53L5CX] ULD init: %d\r\n", status);
+    printf("  [VL53L5CX] ULD init: %d\r\n", status);
     if (status)
     {
-//        printf("  [VL53L5CX] ULD init failed!\r\n");
+        printf("  [VL53L5CX] ULD init failed!\r\n");
         return 1;
     }
-//    printf("  [VL53L5CX] ULD ready! (version: %s)\r\n", VL53L5CX_API_REVISION);
+    printf("  [VL53L5CX] ULD ready! (version: %s)\r\n", VL53L5CX_API_REVISION);
 
     // 7. 设置默认配置参数
     vl53l5cx_config.resolution           = VL53L5CX_RESOLUTION_4X4;             // 默认 4x4 分辨率
@@ -149,15 +157,15 @@ uint8 vl53l5cx_init(void)
     {
         // 使用 ST API 设置分辨率
         status = st_vl53l5cx_set_resolution(&vl53l5cx_dev, VL53L5CX_RESOLUTION_4X4);
-//        printf("  [VL53L5CX] Set resolution: %d\r\n", status);
+        printf("  [VL53L5CX] Set resolution: %d\r\n", status);
 
         // 使用 ST API 设置测距频率
         status = vl53l5cx_set_ranging_frequency_hz(&vl53l5cx_dev, vl53l5cx_config.ranging_frequency_hz);
-//        printf("  [VL53L5CX] Set frequency: %d\r\n", status);
+        printf("  [VL53L5CX] Set frequency: %d\r\n", status);
 
         // 使用 ST API 设置积分时间（需要切换到 Autonomous 模式）
         status = vl53l5cx_set_integration_time_ms(&vl53l5cx_dev, vl53l5cx_config.timing_budget_ms);
-//        printf("  [VL53L5CX] Set integration time: %d\r\n", status);
+        printf("  [VL53L5CX] Set integration time: %d\r\n", status);
     }
 
     // 9. 标记初始化完成
@@ -171,7 +179,7 @@ uint8 vl53l5cx_init(void)
     // 注册到逐飞外设类型系统
     set_tof_type(TOF_VL53L5CX, vl53l5cx_int_handler);
 
-//    printf("  [VL53L5CX] Init OK\r\n");
+    printf("  [VL53L5CX] Init OK\r\n");
     return 0;
 }
 
