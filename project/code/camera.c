@@ -27,7 +27,7 @@
 #include <math.h> // 使用 atan2f 需要包含 math 库
 
 #define VISION_ENABLE_IPS_DISPLAY   1
-#define VISION_SERIAL_DEBUG         1
+#define VISION_SERIAL_DEBUG         0
 #define VISION_SERIAL_DEBUG_DIV     1
 
 // 定义坐标点结构体
@@ -206,7 +206,7 @@ static Point edge_pts[MAX_EDGE_POINTS];
 static uint32 edge_cnt = 0;
 
 // 霍夫直线结构
-#define HOUGH_MAX_LINES   12
+#define HOUGH_MAX_LINES   8
 typedef struct {
     int16 rho;
     int8  theta_deg;
@@ -349,10 +349,14 @@ static uint8 find_v_from_hough(const HoughLine *lines, uint8 line_cnt, Blob *b)
     {
         for (uint8 j = i + 1; j < line_cnt; j++)
         {
-            // 要求一条正斜率、一条负斜率
-            if ((lines[i].theta_deg > 0 && lines[j].theta_deg > 0) ||
-                (lines[i].theta_deg < 0 && lines[j].theta_deg < 0))
-                continue;
+            // 要求两条直线夹角在 V 形范围内 (12°~90°)
+            // θ差异太小→平行无法形成V；θ差异太大→过于尖锐不可能是车标
+            {
+                int8 diff = lines[i].theta_deg - lines[j].theta_deg;
+                if (diff < 0) diff = -diff;
+                if (diff < (int8)CAR_MARK_MIN_ANGLE_DEG || diff > (int8)CAR_MARK_MAX_ANGLE_DEG)
+                    continue;
+            }
 
             // 两条直线方程: x*cosθ + y*sinθ = ρ
             float cos1 = cosf((float)lines[i].theta_deg * 0.0174532925f);
@@ -371,47 +375,40 @@ static uint8 find_v_from_hough(const HoughLine *lines, uint8 line_cnt, Blob *b)
             if (ax < 0 || ax >= (float)CAMERA_W || ay < 0 || ay >= (float)CAMERA_H)
                 continue;
 
-            // ★★★ 顶点到 blob 质心的距离约束: 防止飞点
-            // 霍夫检测到的直线交点 (顶点) 应靠近当前 blob, 距离过远说明是杂散直线
-            float dvx = ax - (float)b->cx;
-            float dvy = ay - (float)b->cy;
-            float v_dist2 = dvx * dvx + dvy * dvy;
-            uint32 max_v_dist = (uint32)(b->width + b->height);  // 最多允许宽+高
-            if (v_dist2 > (float)(max_v_dist * max_v_dist)) continue;
+            // ★★★ 顶点距离约束已移除: 改为依赖边缘追踪验证有效性
+            // 霍夫检测到的直线交点 (顶点) 可能因极端透视远离 blob,
+            // 后续边缘追踪会验证直线是否穿过 blob 区域, 足够过滤飞点
 
-            // 底边端点: 沿霍夫线从顶点向下追踪, 在 blob 包围盒内找最远的边缘点
-            // 避免原来用固定 y_ref + 线方程延伸导致端点跑到空白区域
-            float bb_left  = (float)(b->cx - b->width / 2);
-            float bb_right = (float)(b->cx + b->width / 2);
-            float bb_top   = (float)(b->cy - b->height / 2);
-            float bb_bot   = (float)(b->cy + b->height / 2);
+            // 底边端点: 沿霍夫线从顶点向下追踪, 在图像内找最远的边缘点
 
-            // 线1方向: 沿直线方向 (法线旋转90°), 确保向下走
+            // 线1方向: 沿直线方向 (法线旋转90°)
+            // 选择朝向 blob 中心的方向, 避免斜向V形追踪时穿出图像边界
             float dx1 = -sin1, dy1 = cos1;
-            if (dy1 < 0) { dx1 = -dx1; dy1 = -dy1; }
+            float to_cx1 = (float)b->cx - ax;
+            float to_cy1 = (float)b->cy - ay;
+            if (dx1 * to_cx1 + dy1 * to_cy1 < 0) { dx1 = -dx1; dy1 = -dy1; }
             float bx = ax, by = ay;
-            for (float t = 0; t < 60; t += 1.0f) {
+            for (float t = 0; t < 200; t += 1.0f) {
                 float x = ax + dx1 * t;
                 float y = ay + dy1 * t;
-                if (x < bb_left || x > bb_right || y < bb_top || y > bb_bot) break;
                 int ix = (int)x, iy = (int)y;
-                if (ix >= 0 && ix < CAMERA_W && iy >= 0 && iy < CAMERA_H) {
-                    if (image_buffer[iy][ix] == 255) { bx = x; by = y; }
-                }
+                if (ix < 0 || ix >= CAMERA_W || iy < 0 || iy >= CAMERA_H) break;
+                if (image_buffer[iy][ix] == 255) { bx = x; by = y; }
             }
 
-            // 线2方向: 沿直线方向 (法线旋转90°), 确保向下走
+            // 线2方向: 沿直线方向 (法线旋转90°)
+            // 选择朝向 blob 中心的方向
             float dx2 = -sin2, dy2 = cos2;
-            if (dy2 < 0) { dx2 = -dx2; dy2 = -dy2; }
+            float to_cx2 = (float)b->cx - ax;
+            float to_cy2 = (float)b->cy - ay;
+            if (dx2 * to_cx2 + dy2 * to_cy2 < 0) { dx2 = -dx2; dy2 = -dy2; }
             float cx = ax, cy = ay;
-            for (float t = 0; t < 60; t += 1.0f) {
+            for (float t = 0; t < 200; t += 1.0f) {
                 float x = ax + dx2 * t;
                 float y = ay + dy2 * t;
-                if (x < bb_left || x > bb_right || y < bb_top || y > bb_bot) break;
                 int ix = (int)x, iy = (int)y;
-                if (ix >= 0 && ix < CAMERA_W && iy >= 0 && iy < CAMERA_H) {
-                    if (image_buffer[iy][ix] == 255) { cx = x; cy = y; }
-                }
+                if (ix < 0 || ix >= CAMERA_W || iy < 0 || iy >= CAMERA_H) break;
+                if (image_buffer[iy][ix] == 255) { cx = x; cy = y; }
             }
 
             // 使用追踪到的实际端点位置
@@ -532,13 +529,20 @@ static void compute_car_marker_feature(Blob *b, Point *pts, uint32 count)
     }
 
     b->marker_hough_v = 0;
+    b->marker_angle_deg = 0;   // 防止复用旧值导致 angle=0 但 marker_hough_v=1 的 bug
+
+    // DEBUG_HOUGH: 提升到函数作用域, 供末尾打印使用
+    HoughLine hough_lines[HOUGH_MAX_LINES];
+    uint8 hough_cnt = 0;
+    uint8 hough_skip = 0;
+    uint8 hough_num_angles = 0;
 
     // ===== 第一步：霍夫变换 (优先) =====
     // 在 blob ROI 内检测直线, 配对成 V 形
     // 霍夫对直线敏感, 比 BFS 拓扑法更适合断裂的 V 形
     {
-        #define CAR_MARK_EDGE_MARGIN  (HOUGH_ROI_MARGIN + 8)
-        uint8 hough_skip = 0;
+        #define CAR_MARK_EDGE_MARGIN  10
+        hough_skip = 0;
         if (b->cx < CAR_MARK_EDGE_MARGIN ||
             b->cx > (CAMERA_W - CAR_MARK_EDGE_MARGIN) ||
             b->cy < CAR_MARK_EDGE_MARGIN ||
@@ -553,15 +557,16 @@ static void compute_car_marker_feature(Blob *b, Point *pts, uint32 count)
             uint16 roi_half_w = (b->width / 2) + HOUGH_ROI_MARGIN;
             uint16 roi_half_h = (b->height / 2) + HOUGH_ROI_MARGIN;
 
-            int8 hough_angles[48];
+            int8 hough_angles[62];
             uint8 idx = 0;
             for(int8 t = -(int8)HOUGH_ANGLE_MAX; t <= -(int8)HOUGH_ANGLE_MIN; t += (int8)HOUGH_ANGLE_STEP)
                 hough_angles[idx++] = t;
             for(int8 t = (int8)HOUGH_ANGLE_MIN; t <= (int8)HOUGH_ANGLE_MAX; t += (int8)HOUGH_ANGLE_STEP)
                 hough_angles[idx++] = t;
 
-            HoughLine hough_lines[HOUGH_MAX_LINES];
-            uint8 hough_cnt = hough_transform_roi(
+            hough_num_angles = idx;
+
+            hough_cnt = hough_transform_roi(
                 b->cx, b->cy,
                 roi_half_w, roi_half_h,
                 hough_angles, idx,
@@ -593,8 +598,12 @@ static void compute_car_marker_feature(Blob *b, Point *pts, uint32 count)
 #endif
                 if(ok)
                 {
-                    b->marker_hough_v = 1;
-                    return;  // 霍夫确认 V 形, 直接返回
+                    // 防护: 如果 find_v_from_hough 返回 ok 但 angle 未正确设置, 拒绝
+                    if(b->marker_angle_deg >= CAR_MARK_MIN_ANGLE_DEG
+                       && b->marker_angle_deg <= CAR_MARK_MAX_ANGLE_DEG)
+                    {
+                        b->marker_hough_v = 1;  // 霍夫确认 V 形
+                    }
                 }
             }
 #if DEBUG_SCORES
@@ -608,6 +617,7 @@ static void compute_car_marker_feature(Blob *b, Point *pts, uint32 count)
 
     // ===== 第二步：BFS 拓扑法 (兜底) =====
     // 霍夫没找到 V 形时, 用 BFS 极值点拓扑法尝试
+    if (!b->marker_hough_v)
     {
     // 第一步：找 8 个极值候选点
     Point candidates[8];
@@ -736,7 +746,143 @@ static void compute_car_marker_feature(Blob *b, Point *pts, uint32 count)
         b->marker_heading = atan2f((float)((int32)vertex.y - (int32)base_mid_y),
                                    (float)((int32)vertex.x - (int32)base_mid_x));
     }
+    }  // if (!b->marker_hough_v)
+
+    // ===== 第三步：轮廓暴力搜索 V 形 (兜底的兜底) =====
+    // Hough + BFS 都失败时, 直接枚举轮廓点采样对, 暴力搜索最佳三角形
+    if (!b->marker_hough_v && b->marker_angle_deg == 0)
+    {
+        // 采样步长与轮廓点数成比例, 保证计算量可控
+        uint8 step_s = (count > 80) ? 4u : (count > 40) ? 3u : 2u;
+        if (step_s < 2) step_s = 2;
+
+        uint32 best_score = 0;
+        uint16 best_vertex_idx = 0, best_base1_idx = 0, best_base2_idx = 0;
+        uint16 best_h_times10 = 0;  // 保存最佳高度×10
+
+        for (uint32 i = 0; i < count; i += step_s)
+        {
+            for (uint32 j = i + step_s * 2; j < count; j += step_s)
+            {
+                int32 dx = (int32)pts[j].x - (int32)pts[i].x;
+                int32 dy = (int32)pts[j].y - (int32)pts[i].y;
+                uint32 d2 = (uint32)(dx*dx + dy*dy);
+                uint32 min_d2 = (uint32)CAR_MARK_MIN_BASE_LEN * (uint32)CAR_MARK_MIN_BASE_LEN;
+                if (d2 < min_d2) continue;  // 底边太短
+
+                float bx_f = (float)dx;
+                float by_f = (float)dy;
+                float base_len_f = sqrtf(bx_f * bx_f + by_f * by_f);
+                if (base_len_f < 0.5f) continue;
+
+                // 找离线段 BC 最远的轮廓点作为顶点 A
+                float best_h = 0;
+                uint32 best_k = 0;
+                for (uint32 k = 0; k < count; k += 1)  // 用步长1以获得最大精度
+                {
+                    if (k == i || k == j) continue;
+                    float px = (float)((int32)pts[k].x - (int32)pts[i].x);
+                    float py = (float)((int32)pts[k].y - (int32)pts[i].y);
+                    float h = fabsf(px * by_f - py * bx_f) / base_len_f;
+                    if (h > best_h) { best_h = h; best_k = k; }
+                }
+
+                if (best_h < (float)CAR_MARK_MIN_HEIGHT) continue;
+
+                // 计算 V 形夹角
+                float v1x = (float)((int32)pts[i].x - (int32)pts[best_k].x);
+                float v1y = (float)((int32)pts[i].y - (int32)pts[best_k].y);
+                float v2x = (float)((int32)pts[j].x - (int32)pts[best_k].x);
+                float v2y = (float)((int32)pts[j].y - (int32)pts[best_k].y);
+                float arm1 = sqrtf(v1x*v1x + v1y*v1y);
+                float arm2 = sqrtf(v2x*v2x + v2y*v2y);
+                float angle_deg = 0;
+                if (arm1 > 0.5f && arm2 > 0.5f)
+                {
+                    float cos_a = (v1x*v2x + v1y*v2y) / (arm1 * arm2);
+                    if (cos_a > 1.0f) cos_a = 1.0f;
+                    if (cos_a < -1.0f) cos_a = -1.0f;
+                    angle_deg = acosf(cos_a) * 57.2957795f;
+                }
+                if (angle_deg < (float)CAR_MARK_MIN_ANGLE_DEG ||
+                    angle_deg > (float)CAR_MARK_MAX_ANGLE_DEG) continue;
+
+                // 评分: base × height × 对称性(arm1/arm2 比值接近1)
+                float sym = (arm1 < arm2) ? (arm1 / arm2) : (arm2 / arm1);
+                if (sym < 0.3f) continue;  // 严重不对称, 跳过
+                uint32 score = (uint32)(base_len_f * best_h * sym * 10.0f);
+
+                if (score > best_score)
+                {
+                    best_score = score;
+                    best_base1_idx = (uint16)i;
+                    best_base2_idx = (uint16)j;
+                    best_vertex_idx = (uint16)best_k;
+                    best_h_times10 = (uint16)(best_h * 10.0f + 0.5f);
+                }
+            }
+        }
+
+        // 如果暴力搜索成功, 存储 V 形特征
+        if (best_score > 0)
+        {
+            Point bv = pts[best_vertex_idx];
+            Point bb1 = pts[best_base1_idx];
+            Point bb2 = pts[best_base2_idx];
+
+            uint16 base_mid_x = (bb1.x + bb2.x) / 2;
+            uint16 base_mid_y = (bb1.y + bb2.y) / 2;
+            float bbase_len = sqrtf((float)((int32)bb2.x-(int32)bb1.x)*((int32)bb2.x-(int32)bb1.x) +
+                                    (float)((int32)bb2.y-(int32)bb1.y)*((int32)bb2.y-(int32)bb1.y));
+            float v1x_f = (float)((int32)bb1.x-(int32)bv.x);
+            float v1y_f = (float)((int32)bb1.y-(int32)bv.y);
+            float v2x_f = (float)((int32)bb2.x-(int32)bv.x);
+            float v2y_f = (float)((int32)bb2.y-(int32)bv.y);
+            float arm1_f = sqrtf(v1x_f*v1x_f+v1y_f*v1y_f);
+            float arm2_f = sqrtf(v2x_f*v2x_f+v2y_f*v2y_f);
+            float dot_f = v1x_f*v2x_f + v1y_f*v2y_f;
+            float cos_a_f = 1.0f;
+            if(arm1_f>0.5f && arm2_f>0.5f) { cos_a_f = dot_f/(arm1_f*arm2_f);
+                if(cos_a_f>1)cos_a_f=1;if(cos_a_f<-1)cos_a_f=-1; }
+            float angle_deg_f = acosf(cos_a_f)*57.2957795f;
+            float height_f = (float)best_h_times10 / 10.0f;
+
+            b->marker_base1_x = bb1.x; b->marker_base1_y = bb1.y;
+            b->marker_base2_x = bb2.x; b->marker_base2_y = bb2.y;
+            b->marker_vertex_x = bv.x; b->marker_vertex_y = bv.y;
+            b->marker_base_mid_x = base_mid_x; b->marker_base_mid_y = base_mid_y;
+            b->marker_base_len = (uint16)(bbase_len+0.5f);
+            b->marker_height = (uint16)(height_f+0.5f);
+            b->marker_angle_deg = (uint16)(angle_deg_f+0.5f);
+            b->marker_arm1_len = (uint16)(arm1_f+0.5f);
+            b->marker_arm2_len = (uint16)(arm2_f+0.5f);
+            b->marker_heading = atan2f((float)((int32)bv.y-(int32)base_mid_y),
+                                       (float)((int32)bv.x-(int32)base_mid_x));
+        }
     }
+
+#if DEBUG_HOUGH
+    {
+        uint8 v_found = b->marker_hough_v;
+        printf("H,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
+               (unsigned long)g_vision_share.frame_id,
+               (unsigned int)b->area, (unsigned int)b->cx, (unsigned int)b->cy,
+               (unsigned int)b->width, (unsigned int)b->height,
+               (unsigned int)hough_cnt, (unsigned int)HOUGH_VOTE_THRESH, (unsigned int)hough_num_angles,
+               (unsigned int)v_found,
+               v_found ? (unsigned int)b->marker_angle_deg : 0u,
+               v_found ? (unsigned int)b->marker_height : 0u,
+               v_found ? (unsigned int)b->marker_arm1_len : 0u,
+               v_found ? (unsigned int)b->marker_arm2_len : 0u,
+               v_found ? (unsigned int)b->marker_base_len : 0u);
+        for (uint8 li = 0; li < hough_cnt && li < HOUGH_MAX_LINES; li++) {
+            printf(",%d,%d,%u",
+                   (int)hough_lines[li].rho, (int)hough_lines[li].theta_deg,
+                   (unsigned int)hough_lines[li].votes);
+        }
+        printf("\r\n");
+    }
+#endif
 }
 
 // V形车标调试绘制：在图像上画出角点、底边端点、底边中点

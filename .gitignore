@@ -5,6 +5,7 @@ Thumbs.db
 # Local editor/assistant config
 .claude/
 .cursor/
+.trae/
 
 # Archives
 *.zip
@@ -33,3 +34,14 @@ project/iar/Debug_m7_1/
 *.dbgdt
 *.browse
 *.pbd
+
+# Hough transform log data (CSV recordings)
+hough_log_*.csv
+
+# Python cache & temp analysis
+__pycache__/
+*.pyc
+tools/analyze_v.py
+tools/analyze_log.py
+tools/analyze_log2.py
+tools/analyze_log3.py

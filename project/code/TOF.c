@@ -98,11 +98,24 @@ void height_data_deal(float dt)
         }
     }
 
-    // 2.2 中心区有效数 ≥ 1 则取平均，否则回退到 Zone 0
+    // 2.2 中心区有效数 ≥ 1 则取最高值（最远距离），否则回退到 Zone 0
     float raw_height;
     if (valid_count > 0)
     {
-        raw_height = raw_height_sum / (float)valid_count;
+        // 取最高值（最远距离），使高度定在地面最高点
+        float max_h = 0.0f;
+        for (uint8 i = 0; i < 4; i++)
+        {
+            uint8  idx = center_idx[i];
+            uint8  st  = vl53l5cx_zone_result.status[idx];
+            uint16 d   = vl53l5cx_zone_result.distance_mm[idx];
+            if ((5 == st || 9 == st) && d > 0 && d < 8000)
+            {
+                float h = (float)d / 1000.0f;
+                if (h > max_h) max_h = h;
+            }
+        }
+        raw_height = max_h;
     }
     else
     {
@@ -132,7 +145,7 @@ void height_data_deal(float dt)
     static uint8_t cos_filter_init = 0;
     if(!cos_filter_init)
     {
-        PT1Filter_InitWithFreq(&filter_cos, 30.0f, 50);
+        PT1Filter_InitWithFreq(&filter_cos, 30.0f, 25);
         cos_filter_init = 1;
     }
     float cos_factor = PT1Filter_Apply(&filter_cos, rotation_matrix[2][2]);
@@ -144,8 +157,8 @@ void height_data_deal(float dt)
     if (laser_was_invalid)
     {
         laser_was_invalid = 0;
-        PT1Filter_InitWithFreq(&filter_height, HEIGHT_FILTER_FREQ, 50);
-        PT1Filter_InitWithFreq(&filter_height_vz, HEIGHT_VZ_FILTER_FREQ, 50);
+        PT1Filter_InitWithFreq(&filter_height, HEIGHT_FILTER_FREQ, 25);
+        PT1Filter_InitWithFreq(&filter_height_vz, HEIGHT_VZ_FILTER_FREQ, 25);
         alt.height = true_height_raw;
         alt.last_height = true_height_raw;
         alt.height_limited = true_height_raw;

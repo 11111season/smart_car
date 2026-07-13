@@ -27,18 +27,13 @@ static void process_drone_command(uint8_t cmd)
             printf("UNLOCK (out=1)\r\n");
             break;
 
-        case 2:     // #2$ → 开启PID控制
+        case 2:     // #2$ → 锁偏航 + 起飞
             if (!unlocked) {
                 printf("ignored (not unlocked yet)\r\n");
                 break;
             }
-            if (last_cmd == 2) {
-                // 重复 #2：PID 全部清零，重新锁偏航
-                PID_Rest_Init(pPidObject, 12);
-                PIDYaw.target = eulerAngle.yaw;
-                printf("PID reset, yaw=%.1f (re-trigger #2)\r\n", eulerAngle.yaw);
-                break;
-            }
+            PIDYaw.target = eulerAngle.yaw;  // 锁当前偏航角为零点
+            printf("yaw locked=%.1f\r\n", eulerAngle.yaw);
             out_flag = 2;
             flight_state = STATE_TAKEOFF;
             printf("TAKEOFF (out=2)\r\n");
@@ -112,10 +107,11 @@ int main(void)
 //                  (double)mag_calib[0], (double)mag_calib[1], (double)mag_calib[2]);
 //       }
        //printf("%d,%d,%d\r\n", qmc5883l_mag_x, qmc5883l_mag_y, qmc5883l_mag_z);
-      printf("%5d,%5d,%5d,%5d\r\n",m1,m2,m3,m4);
-//    printf("%5f,%5f,%5f,%5f,%5f,%5f\r\n",PIDPosX.out,PIDPosY.out,world_data.vx,world_data.vy,(float)g_vision_share.car_x,(float)g_vision_share.car_y);
-//    printf("%5f,%5f,%5f,%5f\r\n",imu_data.gyro_x_pt1,imu_data.gyro_y_pt1,eulerAngle.roll,eulerAngle.pitch);
-      //printf("%5f,%5f,%5f,%5f\r\n",PIDHeight.out,PIDVelH.out,world_data.vz,alt.target_height);
+    //   printf("%5d,%5d,%5d,%5d\r\n",m1,m2,m3,m4);
+  // printf("%2f,%2f,%2f,%2f,%2f,%2f\r\n",PIDPosX_Vel.out,PIDPosY_Vel.out,world_data.vx,world_data.vy,PIDPosX_Vel.test,PIDPosY_Vel.test);
+//    printf("%5f,%5f,%5f,%5f\r\n",imu_data.gyro_x_pt1,imu_data.gyro_y_pt1,eulerAngle.roll,eulerAngle.pitch);         
+  //   printf("%5f,%5f,%5f,%5f\r\n",PIDRoll.out,PIDPitch.out,PIDVelY.out,PIDVelX.out);
+      //printf("%5f,%5f,%5f,%5f,%5f\r\n",PIDHeight.out,PIDVelH.out,world_data.vz,alt.target_height,world_data.pz);
   //    printf("%5f,%5f,%5f\r\n",qmc5883l_mag_x_gauss,qmc5883l_mag_y_gauss);
       HC06_Task();                        // 解析来自小车的 #N$ 指令
 
@@ -123,7 +119,12 @@ int main(void)
           uint8_t cmd = HC06_GetCmd();    // 获取指令
           if(cmd) process_drone_command(cmd);
       }
-
-      small_driver_set_duty(m1, m2, m3, m4);
+      
+      // out_flag=1 为电机测试模式：直接输出固定占空比，不经过 stabilization 混控
+      if (out_flag == 1) {
+          small_driver_set_duty(3000, 3000, 3000, 3000);
+      } else {
+          small_driver_set_duty(m1, m2, m3, m4);
+      }
     }
 }

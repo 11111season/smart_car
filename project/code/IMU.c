@@ -247,7 +247,7 @@ void Mahony_Mag_Update(void)
     }
 
     const float dt = 0.005f;
-    const float Ki = 0.05f;      // 积分增益
+    const float Ki = 0.01f;      // 积分增益
 
     static float startup_timer_mag = 0.0f;
     startup_timer_mag += dt;

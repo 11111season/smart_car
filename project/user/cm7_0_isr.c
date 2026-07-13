@@ -45,6 +45,12 @@ extern vision_share_t g_vision_share;
 
 static uint32 last_frame_id = 0;
 
+// 丢帧保护：超过 1s 无新帧时，坐标衰减到 0，防止小车抽搐
+#define FRAME_DROP_TIMEOUT  100     // 100次 × 10ms = 1s (100Hz ISR)
+#define FRAME_DROP_DECAY    0.98f   // 每10ms衰减系数
+
+static uint32_t frame_drop_cnt = 0;
+
 // 视觉坐标 EMA 平滑（降低逐帧抖动）
 #define VISION_SMOOTH_ALPHA  0.3f   // 0=完全平滑, 1=无平滑, 越小越平滑
 
@@ -67,8 +73,17 @@ static void process_vision_frame(void)
     SCB_CleanInvalidateDCache_by_Addr((uint32_t *)&g_vision_share, sizeof(g_vision_share));
 
     if(g_vision_share.frame_id == last_frame_id)
+    {
+        // 丢帧保护：超过 1s 无新帧，坐标衰减到 0，防止小车抽搐
+        if (++frame_drop_cnt > FRAME_DROP_TIMEOUT) {
+            filt_err_x *= FRAME_DROP_DECAY;
+            filt_err_y *= FRAME_DROP_DECAY;
+            car_send_by_vision();
+        }
         return;
+    }
 
+    frame_drop_cnt = 0;
     last_frame_id = g_vision_share.frame_id;
 
     // 首次初始化
@@ -95,7 +110,7 @@ static void process_vision_frame(void)
 void pit0_ch0_isr()                     // 定时器通道 0 的中断服务函数 (200Hz)
 {
     pit_isr_flag_clear(PIT_CH0);
-    flight_control(0.005);              // 由状态机分发到 take_off / hover_control 等
+    stabilization(0.005);             
 }
 
 void pit0_ch1_isr()                     // 定时器通道 1 的中断服务函数
@@ -133,7 +148,12 @@ void pit0_ch10_isr()                    // 定时器通道 10 的中断服务函
 {
     pit_isr_flag_clear(PIT_CH10);
 
-    process_vision_frame();             // 100Hz 读视觉帧 + HC06 发送
+    // 分频: 每2次执行1次 → 50Hz
+    static uint8_t vis_div = 0;
+    if (++vis_div >= 2) {
+        vis_div = 0;
+        process_vision_frame();             // 50Hz 读视觉帧 + HC06 发送
+    }
 
     fifo_data_count = fifo_used(&uart_data_fifo);
     if(fifo_data_count != 0)
