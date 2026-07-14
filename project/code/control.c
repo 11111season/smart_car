@@ -137,20 +137,28 @@ void stabilization(float dt)
     if (++ctrl_div >= 5) {
         ctrl_div = 0;
         if (g_vision_share.car_found) {
-            PIDPosX.target = get_filtered_car_x();
-            PIDPosY.target = get_filtered_car_y();
+            float car_x = get_filtered_car_x();
+            float car_y = get_filtered_car_y();
+            // 姿态补偿: 前倾→car_x↑, 右倾→car_y↓
+            car_x -= eulerAngle.pitch * PIXELS_PER_DEG;
+            car_y += eulerAngle.roll  * PIXELS_PER_DEG;
+            PIDPosX.target = car_x;
+            PIDPosY.target = car_y;
+            PID_Update(&PIDPosX, PIDPosX.target, (float)(CAMERA_W / 2), dt);
+            PID_Update(&PIDPosY, PIDPosY.target, (float)(CAMERA_H / 2), dt);
+            PID_Update(&PIDPosX_Vel, PIDPosX.out, world_data.vx, dt);
+            PID_Update(&PIDPosY_Vel, PIDPosY.out, world_data.vy, dt);
+            last_roll_tgt  = PIDRoll.target;
+            last_pitch_tgt = PIDPitch.target;
+            PIDRoll.target  = PIDPosY_Vel.out;
+            PIDPitch.target = PIDPosX_Vel.out;
         } else {
-            PIDPosX.target = world_data.px;
-            PIDPosY.target = world_data.py;
+            // 无小车: 保持水平0度，不跑位置环
+            last_roll_tgt  = PIDRoll.target;
+            last_pitch_tgt = PIDPitch.target;
+            PIDRoll.target  = 0.0f;
+            PIDPitch.target = 0.0f;
         }
-        PID_Update(&PIDPosX, PIDPosX.target, (float)(CAMERA_W / 2), dt);
-        PID_Update(&PIDPosY, PIDPosY.target, (float)(CAMERA_H / 2), dt);
-        PID_Update(&PIDPosX_Vel, PIDPosX.out, world_data.vx, dt);
-        PID_Update(&PIDPosY_Vel, PIDPosY.out, world_data.vy, dt);
-        last_roll_tgt  = PIDRoll.target;
-        last_pitch_tgt = PIDPitch.target;
-        PIDRoll.target  = PIDPosY_Vel.out;
-        PIDPitch.target = PIDPosX_Vel.out;
     }
     pid_ff_roll  = (PIDRoll.target  - last_roll_tgt)  * ANG_RATE_FF_GAIN / (5.0f * dt);
     pid_ff_pitch = (PIDPitch.target - last_pitch_tgt) * ANG_RATE_FF_GAIN / (5.0f * dt);

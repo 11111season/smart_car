@@ -14,11 +14,11 @@
 // 分类由软判决评分系统动态决策
 
 // 调试开关：0=关闭, 1=每帧每个blob打印分数
-#define DEBUG_SCORES            1
+#define DEBUG_SCORES            0
 
 // 调试开关：0=关闭, 1=每帧打印 #err_x,err_y,n$ HC06 数据帧
 #define DEBUG_HC06_FRAME        0
-#define DEBUG_REALTIME_MONITOR  0   // 上位机可视化输出 (H, 和 B, 行)
+#define DEBUG_REALTIME_MONITOR  1   // 上位机可视化输出 (H, 和 B, 行)
 
 // 调试开关：0=关闭 (霍夫检测已废弃)
 #define DEBUG_HOUGH             0

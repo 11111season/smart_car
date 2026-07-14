@@ -14,7 +14,7 @@
 #define POSITION_HOLD               (1)     // 0=禁用速度环(纯自稳), 1=视觉追车(位置+速度串级), 2=纯速度环悬停
 #define THROTTLE_ATTENUATION        (1)     // 油门衰减 (电池电压补偿)
 #define BASE_SPEED                  (1)     // 基础速度模式
-#define CAR_RETAIN_DECAY            (0.85f) // 小车丢失后坐标衰减系数 (每帧, 越小越快归零)
+#define CAR_RETAIN_DECAY            (0.87f) // 小车丢失后坐标衰减系数 (~1.5s 衰减完 @25Hz)
 
 // =============================================================================
 // 调试模式开关
@@ -63,8 +63,8 @@
 // ---------- 高度环PID积分/输出限幅 ----------
 #define HEIGHT_INTEG_LIMIT_HIGH     (150.0f)
 #define HEIGHT_INTEG_LIMIT_LOW      (-150.0f)
-#define HEIGHT_OUT_LIMIT_HIGH       (0.3f)
-#define HEIGHT_OUT_LIMIT_LOW        (-0.3f)
+#define HEIGHT_OUT_LIMIT_HIGH       (0.35f)
+#define HEIGHT_OUT_LIMIT_LOW        (-0.35f)
 
 #define VELH_INTEG_LIMIT_HIGH       (100.0f)
 #define VELH_INTEG_LIMIT_LOW        (-100.0f)
@@ -74,8 +74,8 @@
 // ---------- 位置环PID积分/输出限幅 ----------
 #define POS_INTEG_LIMIT_HIGH        (0.0f)
 #define POS_INTEG_LIMIT_LOW         (-0.0f)
-#define POS_OUT_LIMIT_HIGH          (0.8f)
-#define POS_OUT_LIMIT_LOW           (-0.8f)
+#define POS_OUT_LIMIT_HIGH          (1.5f)
+#define POS_OUT_LIMIT_LOW           (-1.5f)
 
 #define POS_VEL_INTEG_LIMIT_HIGH    (100.0f)
 #define POS_VEL_INTEG_LIMIT_LOW     (-100.0f)
@@ -100,9 +100,9 @@
 // =============================================================================
 // 核心思路: 水平加速时降低加速度计修正权重，避免角度被加速度"拽歪"
 // acc_dev = |加速度模长 - 1g|  →  acc_dev越大说明机动越剧烈，Kp降得越低
-#define MAHONY_KP_STARTUP           (8.0f)   // 开机前5秒Kp上限 (快速收敛)
-#define MAHONY_KP_NORMAL            (0.4f)   // 5秒后Kp上限 (稳态收敛)
-#define MAHONY_KP_MIN               (0.05f)  // 剧烈机动时Kp (靠陀螺仪独立积分)
+#define MAHONY_KP_STARTUP           (9.0f)   // 开机前5秒Kp上限 (快速收敛)
+#define MAHONY_KP_NORMAL            (0.6f)   // 5秒后Kp上限 (稳态收敛)
+#define MAHONY_KP_MIN               (0.10f)  // 剧烈机动时Kp (靠陀螺仪独立积分)
 #define MAHONY_ACC_DEV_THRESH       (0.15f)  // 加速度偏离阈值(g)，超过后线性衰减Kp
 #define MAHONY_STARTUP_TIME         (8.0f)   // 开机加速收敛时长 (秒)
 
@@ -143,8 +143,8 @@
 #define HEIGHT_KD                   (0.0f)  // 高度外环 D
 
 // 内环(垂直速度->油门): 将垂直速度误差转换为油门修正量
-#define VELH_KP                     (600.0f)  // 垂直速度内环 P
-#define VELH_KI                     (50.0f)  // 垂直速度内环 I
+#define VELH_KP                     (750.0f)  // 垂直速度内环 P
+#define VELH_KI                     (40.0f)  // 垂直速度内环 I
 #define VELH_KD                     (0.00f) // 垂直速度内环 D
 
 // =============================================================================
@@ -156,8 +156,8 @@
 #define POS_KD                      (0.00f)  // 位置外环 D
 
 // 内环(水平速度->角度): 将速度误差转换为期望角度
-#define POS_VELX_KP                 (4.0f) // X方向速度内环 P (前后→Pitch)，原7.0
-#define POS_VELY_KP                 (4.0f) // Y方向速度内环 P (左右→Roll)，原6.0
+#define POS_VELX_KP                 (4.5f) // X方向速度内环 P (前后→Pitch)，原7.0
+#define POS_VELY_KP                 (4.5f) // Y方向速度内环 P (左右→Roll)，原6.0
 #define POS_VEL_KI                  (0.0f)  // 水平速度内环 I
 #define POS_VEL_KD                  (0.0f)  // 水平速度内环 D  
 

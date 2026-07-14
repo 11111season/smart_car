@@ -151,8 +151,8 @@ void velocity_mahony_fusion(float dt)
     static float integralX = 0.0f, integralY = 0.0f;
 
     Kp = 0.8f;                          // 比例增益: 光流观测置信度
-    Ki = flag.takeoff_phase ? 0.0f : 0.2f;  // 起飞阶段不用I (高度不够时水平速度不可靠)
-    
+    Ki = 0.1f;
+        
     // 预测步: 加速度积分得到速度 (imu_data.ax/ay 由加速度计测得)
     world_data.vx += world_data.ax * dt;    // X方向速度预测 (积分)
     world_data.vy += world_data.ay * dt;    // Y方向速度预测 (积分)

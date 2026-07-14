@@ -1781,7 +1781,6 @@ void camera_process(void)
             // 将像素矢量旋转到机体坐标系:
             //   err_x = 小车→信标矢量 投影到 机头方向 (+) → 前后误差
             //   err_y = 小车→信标矢量 投影到 机头右方向 (+) → 左右误差
-            // 这样控制核 CM7_0 可以直接用 err_x→Pitch, err_y→Roll 进行追踪
             g_vision_share.err_x = (int16)(raw_dx * cos_h + raw_dy * sin_h);
             g_vision_share.err_y = (int16)(-raw_dx * sin_h + raw_dy * cos_h);
             decay_err_x = g_vision_share.err_x;
@@ -1790,10 +1789,10 @@ void camera_process(void)
         }
         else
         {
-            decay_err_x = (int16)((float)decay_err_x * ERR_DECAY_FACTOR);
-            decay_err_y = (int16)((float)decay_err_y * ERR_DECAY_FACTOR);
-            g_vision_share.err_x = decay_err_x;
-            g_vision_share.err_y = decay_err_y;
+            decay_err_x = 0;
+            decay_err_y = 0;
+            g_vision_share.err_x = 0;
+            g_vision_share.err_y = 0;
             g_vision_share.target_found = 0;
         }
         // 共享内存刷新: 双核数据同步
@@ -1813,42 +1812,60 @@ void camera_process(void)
         // 上位机可视化输出 (默认关闭, 由 DEBUG_REALTIME_MONITOR 控制)
         #if DEBUG_REALTIME_MONITOR
         {
-            // H行：V形车标 (frame_id,area,v_found,angle,arm1,arm2,base_len,
-            //        base1_x,base1_y,base2_x,base2_y,mid_x,mid_y,vertex_x,vertex_y)
-            for(uint8 hi = 0; hi < blob_num; hi++)
+            // H行：V形车标 — 仅检测到时输出, 减少串口负载
+            int16 h_mx=-1, h_my=-1;
+            uint16 h_angle = 0;
+            uint8 h_idx = 0;
+            for(h_idx = 0; h_idx < blob_num; h_idx++)
             {
-                if(blobs[hi].type == BLOB_CAR_MARKER && blobs[hi].marker_angle_deg > 0)
+                if(blobs[h_idx].type == BLOB_CAR_MARKER && blobs[h_idx].marker_angle_deg > 0)
                 {
-                    printf("H,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
-                           (unsigned long)g_vision_share.frame_id,
-                           (unsigned int)blobs[hi].area,
-                           (unsigned int)blobs[hi].marker_angle_deg,
-                           (unsigned int)blobs[hi].marker_arm1_len,
-                           (unsigned int)blobs[hi].marker_arm2_len,
-                           (unsigned int)blobs[hi].marker_base_len,
-                           (unsigned int)blobs[hi].marker_base1_x,
-                           (unsigned int)blobs[hi].marker_base1_y,
-                           (unsigned int)blobs[hi].marker_base2_x,
-                           (unsigned int)blobs[hi].marker_base2_y,
-                           (unsigned int)blobs[hi].marker_base_mid_x,
-                           (unsigned int)blobs[hi].marker_base_mid_y,
-                           (unsigned int)blobs[hi].marker_vertex_x,
-                           (unsigned int)blobs[hi].marker_vertex_y);
-                    break;  // 只输出第一个 V 形车标
+                    h_mx    = (int16)blobs[h_idx].marker_base_mid_x;
+                    h_my    = (int16)blobs[h_idx].marker_base_mid_y;
+                    h_angle = (uint16)blobs[h_idx].marker_angle_deg;
+                    break;
                 }
             }
+            if(h_mx >= 0)
+            {
+                printf("H,%lu,%u,%u,%u,%u,%u,%u,%u,%.2f,%.1f,%.2f,%.1f,%.1f\r\n",
+                       (unsigned long)g_vision_share.frame_id,
+                       (unsigned int)blobs[h_idx].marker_base1_x,
+                       (unsigned int)blobs[h_idx].marker_base1_y,
+                       (unsigned int)blobs[h_idx].marker_base2_x,
+                       (unsigned int)blobs[h_idx].marker_base2_y,
+                       (unsigned int)blobs[h_idx].marker_vertex_x,
+                       (unsigned int)blobs[h_idx].marker_vertex_y,
+                       h_angle,
+                       (float)g_vision_share.disp_of_height,
+                       (double)(g_vision_share.heading_angle * 57.29578f),
+                       (double)g_vision_share.disp_world_vx,
+                       (double)g_vision_share.disp_roll,
+                       (double)g_vision_share.disp_pitch);
+            }
 
-            // B行：信标 (frame_id,cx,cy,filt_score)
+            // B行：信标 (frame_id,cx,cy,filt_score) — 仅检测到时输出
             for(uint8 bi = 0; bi < blob_num; bi++)
             {
                 if(blobs[bi].type == BLOB_BEACON)
                 {
-                    printf("B,%lu,%u,%u,%u\r\n",
-                           (unsigned long)g_vision_share.frame_id,
+                    printf("B,%u,%u,%u\r\n",
                            (unsigned int)blobs[bi].cx,
                            (unsigned int)blobs[bi].cy,
                            (unsigned int)blobs[bi].filt_beacon_score);
                 }
+            }
+
+            // I行：IMU/状态数据 — 仅无 V 形时发送 (有 V 时 H 行已包含)
+            if(h_mx < 0)
+            {
+                printf("I,%lu,%.2f,%.1f,%.2f,%.1f,%.1f\r\n",
+                       (unsigned long)g_vision_share.frame_id,
+                       (float)g_vision_share.disp_of_height,
+                       (double)(g_vision_share.heading_angle * 57.29578f),
+                       (double)g_vision_share.disp_world_vx,
+                       (double)g_vision_share.disp_roll,
+                       (double)g_vision_share.disp_pitch);
             }
         }
         #endif
@@ -1885,22 +1902,21 @@ void camera_process(void)
 #endif
 
 #if VISION_ENABLE_IPS_DISPLAY
-        // 在车头方向画圆标记
+        // 以下两行在 image_buffer 上画调试标记 + 送 IPS 显示
+        // 如不需要显示摄像头图像可注释掉 ips200_displayimage03x 行
+        for(uint8 i = 0; i < blob_num; i++)
         {
-            for(uint8 i = 0; i < blob_num; i++)
+            if(blobs[i].type == BLOB_CAR_MARKER && blobs[i].marker_angle_deg > 0)
             {
-                if(blobs[i].type == BLOB_CAR_MARKER && blobs[i].marker_angle_deg > 0)
-                {
-                    // 在顶点 (车头) 画一个实心圆
-                    int vx = (int)blobs[i].marker_vertex_x;
-                    int vy = (int)blobs[i].marker_vertex_y;
-                    draw_circle(vx, vy, 8, 200);      // 外圆
-                    draw_circle(vx, vy, 5, 255);      // 内圆
-                    break;
-                }
+                // 在顶点 (车头) 画一个实心圆
+                int vx = (int)blobs[i].marker_vertex_x;
+                int vy = (int)blobs[i].marker_vertex_y;
+                draw_circle(vx, vy, 8, 200);      // 外圆
+                draw_circle(vx, vy, 5, 255);      // 内圆
+                break;
             }
         }
-        ips200_displayimage03x(image_buffer[0], CAMERA_W, CAMERA_H);
+        // ips200_displayimage03x(image_buffer[0], CAMERA_W, CAMERA_H);  // 取消注释以显示摄像头图像
 #endif
 
         mt9v03x_finish_flag = 0;
