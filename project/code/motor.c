@@ -168,13 +168,13 @@ void Motor_Init(void)
 //-------------------------------------------------------------------------------------------------------------------
 void PositionControl_Init(void)
 {
-    PID_Init(&pos_pid_x, 0.025f, 0.0f, 0.0f);
-    PID_SetLimit(&pos_pid_x, 0.15f, -0.15f);            // 输出限幅: ±0.15 m/s
+    PID_Init(&pos_pid_x, 0.020f, 0.0f, 0.0f);
+    PID_SetLimit(&pos_pid_x, 0.25f, -0.25f);            // 输出限幅: ±0.20 m/s
     PID_SetIntegralLimit(&pos_pid_x, 10.0f);
     PID_Enable(&pos_pid_x, 1);
 
-    PID_Init(&pos_pid_y, 0.025f, 0.0f, 0.0f);
-    PID_SetLimit(&pos_pid_y, 0.15f, -0.15f);
+    PID_Init(&pos_pid_y, 0.020f, 0.0f, 0.0f);
+    PID_SetLimit(&pos_pid_y, 0.25f, -0.25f);
     PID_SetIntegralLimit(&pos_pid_y, 10.0f);
     PID_Enable(&pos_pid_y, 1);
 }

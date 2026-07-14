@@ -33,5 +33,7 @@ extern volatile uint64_t time_us;
 extern volatile uint8_t mpu6050_read;
 extern volatile uint32_t uart_rx_irq_cnt;
 extern volatile uint8_t drone_beacon_flag;
+extern uint8_t flag2_count;            // flag=2 连续帧计数, 防抖用
+#define FLAG2_DEBOUNCE  10              // 连续收到N帧flag=2才确认丢信标
 
 #endif /* CODE_HC06_DRIVER_H_ */

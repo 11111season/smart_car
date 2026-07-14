@@ -61,11 +61,12 @@ void pit0_ch0_isr()
 
     PositionControl_Update();
 
-    // 优先级: 标志位1(信标) > 标志位2(去中心)
-    // 当无人机重新发现信标(flag=1)时, 立即打断去中心导航, 转向信标
+    // 优先级: 标志位1(信标) > 巡逻/去中心
+    // 当无人机发现信标(flag=1)时, 立即打断任何导航, 转向信标
     if (mission_armed && drone_beacon_flag == 1) {
         go_center = 0;
         bcn_nav_on = 0;
+        patrol_active = 0;    // 清除巡逻, 下次flag=2时重新初始化
     }
 
     if (bcn_nav_on) {

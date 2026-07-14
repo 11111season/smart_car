@@ -12,7 +12,7 @@
 #include "QMC5883L.h"
 
 /*==================================================== 编译开关 ====================================================*/
-#define INAV_MODE  1   // 0=五信标链式+航点  1=直录几何中心
+#define INAV_MODE  1   // 0=五信标链式+航点  1=双航点巡逻
 
 /*==================================================== 编码器 ====================================================*/
 #define BCN_ENC_CALIB  4.30f
@@ -35,9 +35,10 @@ typedef struct { float x, y; } pt_t;
   #define BCN_MAX  5
   #define WP_MAX   (BCN_MAX + 1)   // 5信标 + 1中心
 #else
-  #define BCN_MAX  1               // 只记录1次(几何中心)
-  #define WP_MAX   1               // 1个航点
+  #define BCN_MAX  2               // 记录2个航点
+  #define WP_MAX   2               // 2个航点
 #endif
+
 
 static pt_t    bcn_abs[BCN_MAX];
 static pt_t    bcn_pos;
@@ -51,7 +52,7 @@ static uint8_t wp_idx = 0;
 static pt_t    seg_start;
 
 #define POS_KP  1.0f    // 位置闭环P增益
-#define POS_MAX 0.25f   // 位置闭环最大速度(m/s)
+#define POS_MAX 0.20f   // 位置闭环最大速度(m/s)
 
 /*==================================================== 状态机 ====================================================*/
 enum { BCN_IDLE, BCN_RECORD, BCN_DONE, BCN_GO };
@@ -72,6 +73,12 @@ float   bcn_nav_angle = 0.0f;
 float   g_pos_x = 0.0f, g_pos_y = 0.0f;
 uint8_t go_center = 0;
 float   fused_yaw = 0.0f;
+
+/*==================================================== 巡逻状态 ====================================================*/
+static uint8_t  patrol_wp = 0;          // 当前巡逻目标航点索引 (0 或 1)
+static uint64_t patrol_arrive_us = 0;   // 到达航点时的 time_us 时间戳
+uint8_t patrol_active = 0;              // 巡逻模式激活标志, ISR可清除
+#define PATROL_WAIT_US  4000000         // 航点等待超时: 4秒 (微秒)
 
 /*==================================================== 磁力计融合 ====================================================*/
 static float mag_offset = 0.0f;    // yaw零点偏移
@@ -118,6 +125,10 @@ void InertialNav_Init(void)
     bcn_nav_on = 0;
     g_pos_x = 0.0f; g_pos_y = 0.0f;
     go_center = 0;
+#if INAV_MODE == 1
+    // mode 1 下这些变量仅 mode 0 使用, 消除编译警告
+    (void)bcn_center; (void)bcn_rem_i; (void)bcn_go_first;
+#endif
 }
 
 /*==================================================== 实时位置追踪 (ISR 10ms调用) ====================================================*/
@@ -161,10 +172,11 @@ static void bcn_build_waypoints(void)
     for (int i = 0; i < BCN_MAX; i++) wp_abs[i] = bcn_abs[i];
     wp_abs[BCN_MAX] = bcn_center;
 #else
-    // 模式1: 直录中心, 仅1个航点
-    bcn_center = bcn_abs[0];  // 中心=录制点
-    wp_abs[0] = bcn_center;
-    printf("INAV: CENTER(%.2f,%.2f)\n", bcn_center.x, bcn_center.y);
+    // 模式1: 双航点, 直接作为巡逻目标
+    wp_abs[0] = bcn_abs[0];
+    wp_abs[1] = bcn_abs[1];
+    printf("INAV: WP1(%.2f,%.2f) WP2(%.2f,%.2f)\n",
+           wp_abs[0].x, wp_abs[0].y, wp_abs[1].x, wp_abs[1].y);
 #endif
 
     // 预计算每段距离和方向
@@ -180,8 +192,7 @@ static void bcn_build_waypoints(void)
     }
 }
 
-static void bcn_start_nav(void);
-static void bcn_start_idle(void);
+// bcn_start_nav / bcn_start_idle removed — replaced by patrol logic in InertialNav_Update
 
 /*==================================================== KEY_4 ====================================================*/
 void InertialNav_KeyHandler(void)
@@ -195,7 +206,7 @@ void InertialNav_KeyHandler(void)
     case BCN_IDLE:
         if (bcn_idx >= BCN_MAX) {
             if (!mission_armed) {
-                // 第3次按键4: 武装任务, 启动PID, 清零位置, 等待无人机标志位
+                // 第5次按键4: 2个航点已记录完毕, 武装任务, 启动PID, 等待无人机指令
                 mission_armed = 1;
                 angle_target = 0.0f;
                 target_vx = 0.0f; target_vy = 0.0f;
@@ -211,7 +222,8 @@ void InertialNav_KeyHandler(void)
             }
             // 已武装: 不再重复操作
         } else {
-            // 开始记录信标: PID全关 + PWM清零
+            // 开始记录信标: PID全关 + PWM清零 + 坐标原点重置 (每次从发车区开始)
+            bcn_pos.x = 0.0f; bcn_pos.y = 0.0f;  // 每个航点独立, 非链式累积
             Motor_Enable_PID(0);
             PID_Enable(&angle_pid_yaw, 0);
             PID_Enable(&angle_pid_gyro, 0);
@@ -272,93 +284,67 @@ void InertialNav_KeyHandler(void)
     key_clear_state(KEY_4);
 }
 
-// 启动导航 (从KEY_4 DONE状态触发, 或由update自动续段)
-// 仅启动PID(不导航), 清零实时位置 → 等待蓝牙M触发
-static void bcn_start_idle(void)
-{
-    // MagYaw_Reset已移至KeyTask_Init, 不再重复调用
-    angle_target = 0.0f;
-    target_vx = 0.0f; target_vy = 0.0f;
-    Motor_Enable_PID(1);
-    PID_Reset(&angle_pid_yaw);   PID_Enable(&angle_pid_yaw, 1);
-    PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
-    g_pos_x = 0.0f; g_pos_y = 0.0f;  // 清零实时位置追踪
-    go_center = 0;
-    printf("INAV: PID on, pos zeroed, waiting M key...\n");
-}
-
-static void bcn_start_nav(void)
-{
-    wp_idx = 0;
-    bcn_state = BCN_GO;
-    seg_start.x = 0.0f; seg_start.y = 0.0f;
-
-    angle_target = 0.0f;
-    target_vx = 0.0f; target_vy = 0.0f;
-    Motor_Enable_PID(1);
-    PID_Reset(&angle_pid_yaw);   PID_Enable(&angle_pid_yaw, 1);
-    PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
-    bcn_enc0[0] = motor_L1.total_encoder;
-    bcn_enc0[1] = motor_L2.total_encoder;
-    bcn_enc0[2] = motor_R1.total_encoder;
-    bcn_enc0[3] = motor_R2.total_encoder;
-    bcn_rem_i = 0.0f; bcn_go_first = 1;
-    printf("INAV: SEG%d GO d=%.2fm a=%.1f\n",
-           wp_idx, wp_dist[wp_idx], wp_yaw[wp_idx]);
-}
-
 /*==================================================== 主循环更新 ====================================================*/
 void InertialNav_Update(void)
 {
     if (bcn_debounce > 0) bcn_debounce--;
 
-    // ---- 标志位2触发去中心 (替代蓝牙M键) ----
-    // 条件: 已武装 + 无人机发2(丢信标) + 未在导航 + 消抖结束 + 距中心>15cm
-    if (mission_armed && drone_beacon_flag == 2 && !go_center && bcn_debounce == 0) {
-        float dx = bcn_center.x - g_pos_x;
-        float dy = bcn_center.y - g_pos_y;
-        if (sqrtf(dx * dx + dy * dy) > 0.15f) {
-            go_center = 1;
-            printf("INAV: flag=2, go center (%.2f,%.2f)\n", bcn_center.x, bcn_center.y);
-        }
+    // ---- 巡逻: flag=2 连续10帧才确认丢信标, 在2个航点间循环 ----
+    // 触发条件: 已武装 + 丢信标确认 + 未在巡逻 + 消抖结束
+    if (mission_armed && flag2_count >= FLAG2_DEBOUNCE && !patrol_active && bcn_debounce == 0) {
+        float d0 = sqrtf((wp_abs[0].x-g_pos_x)*(wp_abs[0].x-g_pos_x) +
+                         (wp_abs[0].y-g_pos_y)*(wp_abs[0].y-g_pos_y));
+        float d1 = sqrtf((wp_abs[1].x-g_pos_x)*(wp_abs[1].x-g_pos_x) +
+                         (wp_abs[1].y-g_pos_y)*(wp_abs[1].y-g_pos_y));
+        patrol_wp = (d0 <= d1) ? 0 : 1;
+        patrol_arrive_us = 0;            // 未到达, 不计时
+        patrol_active = 1;
+        printf("INAV: Patrol start, closer=wp%d (%.2f,%.2f) d0=%.2f d1=%.2f\n",
+               patrol_wp+1, wp_abs[patrol_wp].x, wp_abs[patrol_wp].y, d0, d1);
     }
 
-    // ---- 去中心导航消抖保护 ----
-    if (go_center && bcn_debounce > 0) {
-        bcn_nav_on = 0;  // 消抖期, 强制关nav
-        return;
-    }
-    if (go_center) {
-        float err_x = bcn_center.x - g_pos_x;
-        float err_y = bcn_center.y - g_pos_y;
-        float err   = sqrtf(err_x * err_x + err_y * err_y);
+    if (patrol_active) {
+        pt_t *tgt = &wp_abs[patrol_wp];
+        float err_x = tgt->x - g_pos_x;
+        float err_y = tgt->y - g_pos_y;
+        float err = sqrtf(err_x*err_x + err_y*err_y);
+
         if (err <= 0.15f || (fabsf(err_x) < 0.02f && fabsf(err_y) < 0.15f)) {
+            // 已到达航点，原地等待
             bcn_nav_vx = 0.0f; bcn_nav_vy = 0.0f; bcn_nav_angle = 0.0f;
             bcn_nav_on = 0;
             target_vx = 0.0f; target_vy = 0.0f;
-            go_center = 0;
-            bcn_nav_vx = 0.0f; bcn_nav_vy = 0.0f; bcn_nav_angle = 0.0f;
-            bcn_nav_on = 0;
-            target_vx = 0.0f; target_vy = 0.0f;
-            bcn_debounce = 50;   // 500ms强制消抖, 禁止任何重入
-            Motor_Enable_PID(0); Motor_Enable_PID(1);
-            printf("INAV: back to center! err=%.3fm\n", err);
+
+            if (patrol_arrive_us == 0) {
+                patrol_arrive_us = time_us;   // 记录到达时刻
+                printf("INAV: Arrived wp%d, waiting for beacon...\n", patrol_wp+1);
+            }
+            if (time_us - patrol_arrive_us >= PATROL_WAIT_US) {
+                patrol_wp ^= 1;               // 切换航点 0↔1
+                patrol_arrive_us = 0;
+                printf("INAV: No beacon, switch to wp%d\n", patrol_wp+1);
+            }
             return;
         }
+
+        // 离开航点范围: 重置到达时间戳 (防止中途短暂触发计时)
+        patrol_arrive_us = 0;
+
+        // 导航去航点
         float vx = POS_KP * err_x;
         float vy = POS_KP * err_y;
-        float spd = sqrtf(vx * vx + vy * vy);
-        if (spd > POS_MAX) { vx *= POS_MAX / spd; vy *= POS_MAX / spd; }
+        float spd = sqrtf(vx*vx + vy*vy);
+        if (spd > POS_MAX) { vx *= POS_MAX/spd; vy *= POS_MAX/spd; }
         bcn_nav_vx = vx; bcn_nav_vy = vy; bcn_nav_angle = 0.0f;
         bcn_nav_on = 1;
         return;
     }
 
-    // 段间暂停: 倒计时, 到零时加载下一段
+    // 其他导航状态 (BCN_GO, bcn_pause 等 — mode 0 保留, mode 1 不使用)
     if (bcn_pause > 0) {
         bcn_pause--;
         if (bcn_pause == 0) {
-            seg_start = wp_abs[wp_idx - 1];   // 新段起点 = 上一航点
+            seg_start = wp_abs[wp_idx - 1];
             bcn_enc0[0] = motor_L1.total_encoder;
             bcn_enc0[1] = motor_L2.total_encoder;
             bcn_enc0[2] = motor_R1.total_encoder;
@@ -372,20 +358,18 @@ void InertialNav_Update(void)
     }
 
     if (bcn_state != BCN_GO) {
-        return;   // 不在此处清零bcn_nav_on, 由蓝牙/go_center自行管理
+        return;
     }
 
-    // ---- 导航中: 编码器位置闭环 ----
+    // ---- 导航中: 编码器位置闭环 (mode 0 使用) ----
     int32_t traveled = enc_delta(bcn_enc0);
     float   traveled_m = enc2m(traveled);
 
-    // 当前位置 = 段起点 + 编码器位移沿段方向投影
     float rad = wp_yaw[wp_idx] * (PI / 180.0f);
     pt_t cur;
     cur.x = seg_start.x + traveled_m * cosf(rad);
     cur.y = seg_start.y + traveled_m * sinf(rad);
 
-    // 误差 = 目标 - 当前
     pt_t *tgt = &wp_abs[wp_idx];
     float err_x = tgt->x - cur.x;
     float err_y = tgt->y - cur.y;
@@ -416,7 +400,6 @@ void InertialNav_Update(void)
         return;
     }
 
-    // 位置PID → vx/vy
     float vx = POS_KP * err_x;
     float vy = POS_KP * err_y;
     float spd = sqrtf(vx * vx + vy * vy);

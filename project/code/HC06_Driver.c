@@ -38,6 +38,7 @@ volatile uint32_t uart_rx_irq_cnt = 0;
 static float pos_error_x = 0.0f;
 static float pos_error_y = 0.0f;
 volatile uint8_t drone_beacon_flag = 0;  // 1=beacon found, 2=beacon lost
+uint8_t flag2_count = 0;                 // flag=2 连续帧计数, 达到阈值才确认丢信标
 
 // ֡����״̬��
 enum FrameState {
@@ -107,7 +108,10 @@ void ParseFrameData(const char *data, uint16_t len)
         pos_error_x = x;
         pos_error_y = y;
         drone_beacon_flag = (uint8_t)flag;
-        printf("DRONE: x=%.1f y=%.1f flag=%d\n", x, y, flag);
+        // 防抖: flag=2 连续计数, flag≠2 时清零
+        if (flag == 2) flag2_count++;
+        else           flag2_count = 0;
+        printf("DRONE: x=%.1f y=%.1f flag=%d f2cnt=%d\n", x, y, flag, flag2_count);
     } else {
         printf("DRONE: parse err: [%s]\n", data);
     }

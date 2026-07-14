@@ -16,7 +16,8 @@ extern float   fused_yaw;            // 磁力计+陀螺仪互补融合yaw
 void MagYaw_Update(void);
 void MagYaw_Reset(void);             // 设当前方向为0度
 extern uint8_t go_center;
-extern uint8_t mission_armed;        // 任务武装: 按键4第3次置1, 开始响应无人机标志位
+extern uint8_t mission_armed;        // 任务武装: 按键4第5次置1, 开始响应无人机标志位
+extern uint8_t patrol_active;        // 巡逻模式激活: flag=2时在2个航点间循环
 extern uint16_t bcn_debounce;        // 按键消抖/到达锁
 
 /*----------------------- 函数接口 -----------------------*/
