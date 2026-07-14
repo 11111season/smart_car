@@ -12,13 +12,13 @@ float imu660_gx,imu660_gy,imu660_gz;
 static float gx_bias = 0.0f;
 static float gy_bias = 0.0f;
 static float gz_bias = 0.0f;
+float gyro_z_offset = 0.0f;     // Z轴在线零偏 (非static, ISR可读写), 限幅±2°/s
 // �Ƕȣ��ȣ�
 static float imu660_yaw = 0.0f;
 static float imu660_pitch = 0.0f;
 static float imu660_roll = 0.0f;
 // ȫ�ֱ���
 static float gyro_z_lpf = 0.0f;        // �˲����Z����ٶ�
-static float gyro_z_offset = 0.0f;     // ��ƫ������������/s��
 static uint16_t still_cnt = 0;
 // �ϴθ���ʱ�䣨΢�룩
 static uint64_t last_time = 0;

@@ -37,7 +37,8 @@ PID angle_pid_gyro;     // 内环: 角速度闭环 (陀螺反馈), Kp阻尼+Ki�
 float target_vx  = 0.0f;   // X方向目标速度 (m/s), 前进为正
 float target_vy  = 0.0f;   // Y方向目标速度 (m/s), 左移为正
 float angle_target = 0.0f; // 偏航角目标值 (度)
-uint8_t mission_armed = 0;   // 0=等待按键4发车, 1=已发车, 响应无人机标志位
+uint8_t  mission_armed = 0;      // 0=等待按键4发车, 1=已发车, 响应无人机标志位
+uint64_t mission_arm_time = 0;    // 发车时刻(us), 启动后等4s再执行
 // 控制模式定义
 typedef enum {
     CONTROL_MODE_OPEN_LOOP = 0,    // 开环控制
@@ -168,13 +169,13 @@ void Motor_Init(void)
 //-------------------------------------------------------------------------------------------------------------------
 void PositionControl_Init(void)
 {
-    PID_Init(&pos_pid_x, 0.020f, 0.0f, 0.0f);
-    PID_SetLimit(&pos_pid_x, 0.25f, -0.25f);            // 输出限幅: ±0.20 m/s
+    PID_Init(&pos_pid_x, 0.01f, 0.0f, 0.0f);
+    PID_SetLimit(&pos_pid_x, 0.20f, -0.20f);            // 输出限幅: ±0.20 m/s
     PID_SetIntegralLimit(&pos_pid_x, 10.0f);
     PID_Enable(&pos_pid_x, 1);
 
-    PID_Init(&pos_pid_y, 0.020f, 0.0f, 0.0f);
-    PID_SetLimit(&pos_pid_y, 0.25f, -0.25f);
+    PID_Init(&pos_pid_y, 0.01f, 0.0f, 0.0f);
+    PID_SetLimit(&pos_pid_y, 0.20f, -0.20f);
     PID_SetIntegralLimit(&pos_pid_y, 10.0f);
     PID_Enable(&pos_pid_y, 1);
 }
@@ -195,9 +196,18 @@ void PositionControl_Update(void)
     float err_x = -GetPositionErrorX();
     float err_y = -GetPositionErrorY();
 
-    // 只有 mission_armed 且无人机发现信标(flag=1) 才执行位置闭环
-    // 其他情况(未发车 / flag=2丢失信标) → 清零 PID, 不输出
-    if (!mission_armed || drone_beacon_flag != 1)
+    // 发车4s延迟: 等无人机飞到小车上方, 期间保持静止
+    if (!mission_armed || time_us - mission_arm_time < 4000000)
+    {
+        PID_Reset(&pos_pid_x);
+        PID_Reset(&pos_pid_y);
+        target_vx = 0.0f;
+        target_vy = 0.0f;
+        return;
+    }
+
+    // 无人机发现信标(flag=1) 才执行位置闭环
+    if (drone_beacon_flag != 1)
     {
         PID_Reset(&pos_pid_x);
         PID_Reset(&pos_pid_y);

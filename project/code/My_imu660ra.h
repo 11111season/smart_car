@@ -6,6 +6,7 @@
 /*----------------------- �ⲿ�������� -----------------------*/
 extern volatile uint8_t imu660ra_ready;
 extern float imu660_gx,imu660_gy,imu660_gz; //���ٶ�����������λ����/s
+extern float gyro_z_offset;               // Z轴在线零偏 (°/s), ISR可更新, 限幅±2
 
 /*----------------------- �����ӿ����� --------------------------*/
 void My_IMU660RA_Calibrate(void);

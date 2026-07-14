@@ -79,7 +79,8 @@ extern PID angle_pid_gyro;  // 角速度内环: 陀螺反馈闭环, Ki自动吃�
 extern float target_vy;
 extern float target_vx;   // 直线运动时的目标速度（前进为正，后退为负）
 extern float angle_target;   // 角度环目标角度（度）
-extern uint8_t mission_armed;   // 任务武装状态: 0=等待发车, 1=已发车, 响应无人机指令
+extern uint8_t  mission_armed;      // 任务武装状态: 0=等待发车, 1=已发车, 响应无人机指令
+extern uint64_t mission_arm_time;    // 发车时刻(us), 发车后等4s再执行
 extern volatile uint8_t drone_beacon_flag;  // 无人机标志位: 1=发现信标, 2=丢失信标
 
 /*----------------------- 函数接口声明 --------------------------*/

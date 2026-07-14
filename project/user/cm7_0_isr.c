@@ -89,6 +89,12 @@ void pit0_ch0_isr()
         // 积分已部分转移至漂移补偿, 缓慢衰减避免双重计数
         angle_pid_yaw.err_int_k_1 *= 0.999f;
 
+        // PID积分 → 陀螺零偏: 极慢 (~50x慢于yaw_drift_comp), 传感器层面修正
+        // 当积分持续偏向一侧, 说明陀螺存在零偏, 缓慢转移到gyro_z_offset
+        gyro_z_offset -= angle_pid_yaw.err_int_k_1 * 0.00003f;
+        if (gyro_z_offset >  2.0f) gyro_z_offset =  2.0f;
+        if (gyro_z_offset < -2.0f) gyro_z_offset = -2.0f;
+
         // 内环: 角速度闭环 (陀螺低通反馈)
         PID_SetTarget(&angle_pid_gyro, omega_target);
         static float gz_filt = 0.0f;
