@@ -5,13 +5,21 @@
 通过串口读取无人机视觉调试数据（DEBUG_HOUGH=1 时打印的 H, 行），
 录制期间实时显示统计，Ctrl+C 停止后输出完整摘要。
 
+新增功能:
+  - 端点 (B, C) 坐标录制与分析
+  - 帧间端点漂移量统计
+  - 帧率控制适配 (DEBUG_HOUGH_DIV)
+
 用法:
     python hough_logger.py COM3              # 默认 115200 波特率
     python hough_logger.py COM3 921600       # 指定波特率
     python hough_logger.py COM3 115200 data.csv  # 指定输出文件
 
 输出格式 (每行):
-    H,frame_id,area,cx,cy,w,h,hough_cnt,thresh,angles,v_found,angle,height,arm1,arm2,base,line0_rho,line0_theta,line0_votes,...
+    H,frame_id,area,cx,cy,w,h,hough_cnt,thresh,angles,v_found,hough_v,
+    angle,height,arm1,arm2,base,
+    bx,by,cx,cy,mid_x,mid_y,          ← 新增端点坐标
+    line0_rho,line0_theta,line0_votes,...
 
 依赖: pip install pyserial
 """
@@ -21,6 +29,7 @@ import csv
 import time
 import signal
 import os
+import math
 from datetime import datetime
 from collections import Counter, defaultdict
 
@@ -44,17 +53,40 @@ class HoughLogger:
         self.total_frames = 0
         self.total_blobs = 0
         self.v_found_count = 0
+        self.hough_v_count = 0           # 霍夫验证通过数
         self.hough_cnt_dist = Counter()       # hough_cnt 分布
-        self.v_angles = []                    # 找到 V 形时的角度列表
-        self.v_heights = []                   # 找到 V 形时的高度列表
+        self.v_angles = []                    # V 形角度
+        self.v_heights = []                   # V 形高度
         self.v_arm1s = []                     # 臂长1
         self.v_arm2s = []                     # 臂长2
         self.v_bases = []                     # 底边长
         self.theta_counter = Counter()        # θ 角度出现次数
         self.vote_sum = 0                     # 总票数
         self.vote_count = 0                   # 直线数
-        self.fail_no_lines = 0                # hough_cnt < 2 的 blob 数
-        self.fail_no_pair = 0                 # hough_cnt >= 2 但配对失败的 blob 数
+        self.fail_no_lines = 0                # hough_cnt < 2
+        self.fail_no_pair = 0                 # hough_cnt >= 2 但配对失败
+
+        # ---- 端点分析 ----
+        self.endpoint_bx = []     # B 点 x 坐标
+        self.endpoint_by = []     # B 点 y 坐标
+        self.endpoint_cx = []     # C 点 x 坐标
+        self.endpoint_cy = []     # C 点 y 坐标
+        self.endpoint_mx = []     # 底边中点 x
+        self.endpoint_my = []     # 底边中点 y
+        self.prev_bx = None       # 上一帧 Bx (用于帧间漂移)
+        self.prev_by = None
+        self.prev_cx = None
+        self.prev_cy = None
+        self.b_drift_list = []    # B 点帧间位移列表
+        self.c_drift_list = []    # C 点帧间位移列表
+        self.endpoint_frame_ids = []   # 记录端点时的 frame_id
+
+        # ---- HDBG 配对拒绝原因统计 ----
+        self.hdbg_frames = []
+        self.hdbg_sum = {k: 0 for k in [
+            'total', 'angle_diff', 'parallel', 'oob', 'nbhd', 'bbox',
+            'base_w', 'angle', 'height', 'arm', 'edge', 'pass']}
+
         self.start_time = None
 
         # 实时递减计数
@@ -81,11 +113,16 @@ class HoughLogger:
             print(f"\n[串口] 已关闭 {self.port}")
 
     def parse_line(self, line: str):
-        """解析 H,frame_id,area,cx,cy,... 行"""
+        """
+        解析 H, 行
+        格式: H,frame_id,area,cx,cy,w,h,hough_cnt,thresh,angles,
+             v_found,angle,height,arm1,arm2,base,
+             bx,by,cx_e,cy_e,mid_x,mid_y,        ← 端点坐标 (新增)
+             rho0,theta0,votes0,rho1,theta1,...
+        """
         parts = line.strip().split(',')
-        if len(parts) < 16 or parts[0] != 'H':
+        if len(parts) < 23 or parts[0] != 'H':
             return None
-
         try:
             data = {
                 'frame_id': int(parts[1]),
@@ -98,15 +135,22 @@ class HoughLogger:
                 'thresh': int(parts[8]),
                 'angles': int(parts[9]),
                 'v_found': int(parts[10]),
-                'angle': int(parts[11]),
-                'height': int(parts[12]),
-                'arm1': int(parts[13]),
-                'arm2': int(parts[14]),
-                'base': int(parts[15]),
+                'hough_v': int(parts[11]),
+                'angle': int(parts[12]),
+                'height': int(parts[13]),
+                'arm1': int(parts[14]),
+                'arm2': int(parts[15]),
+                'base': int(parts[16]),
+                'bx': int(parts[17]),
+                'by': int(parts[18]),
+                'cx_e': int(parts[19]),   # C 端点 (与 blob cx 区分)
+                'cy_e': int(parts[20]),
+                'mid_x': int(parts[21]),
+                'mid_y': int(parts[22]),
                 'lines': []
             }
             # 解析直线数据: 每3个字段一组 (rho, theta, votes)
-            i = 16
+            i = 23
             while i + 2 < len(parts):
                 data['lines'].append({
                     'rho': int(parts[i]),
@@ -115,6 +159,33 @@ class HoughLogger:
                 })
                 i += 3
             return data
+        except (ValueError, IndexError):
+            return None
+
+    def parse_hdbg_line(self, line: str):
+        """
+        解析 HDBG, 行 (霍夫配对拒绝原因统计)
+        格式: HDBG,frame_id,total,angle_diff,parallel,oob,nbhd,bbox,base_w,angle,height,arm,edge,pass
+        """
+        parts = line.strip().split(',')
+        if len(parts) < 14 or parts[0] != 'HDBG':
+            return None
+        try:
+            return {
+                'frame_id': int(parts[1]),
+                'total': int(parts[2]),
+                'angle_diff': int(parts[3]),
+                'parallel': int(parts[4]),
+                'oob': int(parts[5]),
+                'nbhd': int(parts[6]),
+                'bbox': int(parts[7]),
+                'base_w': int(parts[8]),
+                'angle': int(parts[9]),
+                'height': int(parts[10]),
+                'arm': int(parts[11]),
+                'edge': int(parts[12]),
+                'pass': int(parts[13]),
+            }
         except (ValueError, IndexError):
             return None
 
@@ -127,13 +198,44 @@ class HoughLogger:
 
         if data['v_found']:
             self.v_found_count += 1
+            if data.get('hough_v', 0):
+                self.hough_v_count += 1
             self.v_angles.append(data['angle'])
             self.v_heights.append(data['height'])
             self.v_arm1s.append(data['arm1'])
             self.v_arm2s.append(data['arm2'])
             self.v_bases.append(data['base'])
+
+            # ---- 端点坐标记录 ----
+            self.endpoint_bx.append(data['bx'])
+            self.endpoint_by.append(data['by'])
+            self.endpoint_cx.append(data['cx_e'])
+            self.endpoint_cy.append(data['cy_e'])
+            self.endpoint_mx.append(data['mid_x'])
+            self.endpoint_my.append(data['mid_y'])
+            self.endpoint_frame_ids.append(data['frame_id'])
+
+            # ---- 帧间漂移计算 ----
+            if self.prev_bx is not None:
+                b_drift = math.sqrt((data['bx'] - self.prev_bx)**2 +
+                                    (data['by'] - self.prev_by)**2)
+                c_drift = math.sqrt((data['cx_e'] - self.prev_cx)**2 +
+                                    (data['cy_e'] - self.prev_cy)**2)
+                self.b_drift_list.append(b_drift)
+                self.c_drift_list.append(c_drift)
+            self.prev_bx = data['bx']
+            self.prev_by = data['by']
+            self.prev_cx = data['cx_e']
+            self.prev_cy = data['cy_e']
+
             self.recent_v += 1
         else:
+            # 未找到 V 形时重置帧间追踪
+            self.prev_bx = None
+            self.prev_by = None
+            self.prev_cx = None
+            self.prev_cy = None
+
             if data['hough_cnt'] < 2:
                 self.fail_no_lines += 1
             else:
@@ -159,7 +261,7 @@ class HoughLogger:
             self.recent_total = 0
 
     def print_summary(self):
-        """打印统计摘要"""
+        """打印统计摘要（含端点分析）"""
         elapsed = time.time() - self.start_time if self.start_time else 0
         print("\n" + "=" * 60)
         print("                    霍夫变换特征统计摘要")
@@ -172,7 +274,15 @@ class HoughLogger:
         # V 形检测率
         if self.total_blobs > 0:
             rate = self.v_found_count / self.total_blobs * 100
-            print(f"  V 形检测率      : {rate:.1f}% ({self.v_found_count}/{self.total_blobs})")
+            print(f"  V 形检出率      : {rate:.1f}% ({self.v_found_count}/{self.total_blobs})")
+            hough_rate = self.hough_v_count / self.total_blobs * 100
+            print(f"  霍夫验证通过率   : {hough_rate:.1f}% ({self.hough_v_count}/{self.total_blobs})")
+            print(f"  (v_found=1但hough_v=0 → 可能是圆形信标)")
+
+        # 帧率估算 (基于总帧数)
+        if elapsed > 0:
+            fps = self.total_frames / elapsed
+            print(f"  平均帧率        : {fps:.1f} fps")
         print()
 
         # 霍夫直线数分布
@@ -200,6 +310,62 @@ class HoughLogger:
             print(f"    底边 (px)       : 均值={self._avg(self.v_bases):.1f}  "
                   f"范围=[{min(self.v_bases)},{max(self.v_bases)}]")
             print()
+
+            # ---- 端点坐标分析 ----
+            print("  ── 端点坐标分析 (V 形成功时) ──")
+            print(f"    B 点 (base1)    : x 均值={self._avg(self.endpoint_bx):.0f}  "
+                  f"范围=[{min(self.endpoint_bx)},{max(self.endpoint_bx)}]")
+            print(f"                    : y 均值={self._avg(self.endpoint_by):.0f}  "
+                  f"范围=[{min(self.endpoint_by)},{max(self.endpoint_by)}]")
+            print(f"    C 点 (base2)    : x 均值={self._avg(self.endpoint_cx):.0f}  "
+                  f"范围=[{min(self.endpoint_cx)},{max(self.endpoint_cx)}]")
+            print(f"                    : y 均值={self._avg(self.endpoint_cy):.0f}  "
+                  f"范围=[{min(self.endpoint_cy)},{max(self.endpoint_cy)}]")
+            print(f"    底边中点 (mid)  : x 均值={self._avg(self.endpoint_mx):.0f}  "
+                  f"范围=[{min(self.endpoint_mx)},{max(self.endpoint_mx)}]")
+            print(f"                    : y 均值={self._avg(self.endpoint_my):.0f}  "
+                  f"范围=[{min(self.endpoint_my)},{max(self.endpoint_my)}]")
+
+            # 端点相对于图像中心的偏移 (判断端点是否偏到角落)
+            print()
+            print("  ── 端点是否偏到角落 ──")
+            img_cx = 188 / 2  # CAMERA_W/2
+            img_cy = 120 / 2  # CAMERA_H/2
+            b_off = [math.sqrt((bx - img_cx)**2 + (by - img_cy)**2)
+                     for bx, by in zip(self.endpoint_bx, self.endpoint_by)]
+            c_off = [math.sqrt((cx - img_cx)**2 + (cy - img_cy)**2)
+                     for cx, cy in zip(self.endpoint_cx, self.endpoint_cy)]
+            print(f"    B 距画面中心    : 均值={self._avg(b_off):.0f}  "
+                  f"最大={max(b_off):.0f} px")
+            print(f"    C 距画面中心    : 均值={self._avg(c_off):.0f}  "
+                  f"最大={max(c_off):.0f} px")
+            print()
+
+            # ---- 帧间端点漂移分析 ----
+            if len(self.b_drift_list) > 0:
+                print("  ── 帧间端点漂移 ──")
+                avg_b = self._avg(self.b_drift_list)
+                max_b = max(self.b_drift_list)
+                avg_c = self._avg(self.c_drift_list)
+                max_c = max(self.c_drift_list)
+
+                # 计算漂移波动 (标准差)
+                std_b = math.sqrt(sum((d - avg_b)**2 for d in self.b_drift_list) / len(self.b_drift_list)) if len(self.b_drift_list) > 1 else 0
+                std_c = math.sqrt(sum((d - avg_c)**2 for d in self.c_drift_list) / len(self.c_drift_list)) if len(self.c_drift_list) > 1 else 0
+
+                print(f"    B 点漂移 (px)   : 均值={avg_b:.2f}  σ={std_b:.2f}  "
+                      f"最大={max_b:.1f}  (n={len(self.b_drift_list)})")
+                print(f"    C 点漂移 (px)   : 均值={avg_c:.2f}  σ={std_c:.2f}  "
+                      f"最大={max_c:.1f}  (n={len(self.c_drift_list)})")
+
+                # 漂移分级 (统计漂移 > 5px 的占比)
+                bad_b = sum(1 for d in self.b_drift_list if d > 5)
+                bad_c = sum(1 for d in self.c_drift_list if d > 5)
+                if len(self.b_drift_list) > 0:
+                    print(f"    B 漂移>5px占比  : {bad_b / len(self.b_drift_list) * 100:.1f}%")
+                if len(self.c_drift_list) > 0:
+                    print(f"    C 漂移>5px占比  : {bad_c / len(self.c_drift_list) * 100:.1f}%")
+                print()
 
             # 角度分布直方图 (10 度一档)
             print("  ── 角度分布直方图 (10° 一档) ──")
@@ -240,9 +406,45 @@ class HoughLogger:
                 print(f"    θ={theta:4d}° : {count:5d} 次 ({pct:5.1f}%)")
             print()
 
+        # ---- HDBG 配对拒绝原因汇总 ----
+        if self.hdbg_frames:
+            print("  ── 霍夫配对拒绝原因汇总 (HDBG) ──")
+            n = len(self.hdbg_frames)
+            for k in ['total', 'angle_diff', 'parallel', 'oob', 'nbhd', 'bbox',
+                      'base_w', 'angle', 'height', 'arm', 'edge', 'pass']:
+                v = self.hdbg_sum.get(k, 0)
+                avg = v / n if n > 0 else 0
+                t = self.hdbg_sum.get('total', 1)
+                pct = v / t * 100 if t > 0 else 0
+                names = {
+                    'angle_diff': 'θ差异不满足V形范围',
+                    'parallel': '平行线(行列式≈0)',
+                    'oob': '交点超出图像边界',
+                    'nbhd': '3×3邻域白像素不足',
+                    'bbox': '端点超出blob矩形',
+                    'base_w': '底边宽度不合理',
+                    'angle': '顶点角度不满足',
+                    'height': '高度不足',
+                    'arm': '臂长<4(交叉配对)',
+                    'edge': '靠近图像边界',
+                    'pass': '通过(可选入评分)',
+                    'total': '总配对尝试'
+                }
+                label = names.get(k, k)
+                pass_mark = '  ← 通过!' if k == 'pass' else ''
+                print(f"    {label:20s}: 均值={avg:5.1f}  占比={pct:5.1f}%{pass_mark}")
+            print()
+
         print("=" * 60)
         print(f"  原始数据已保存至: {self.output_file}")
         print("=" * 60)
+
+    def _rel_to_center(self, x_vals, center_vals, _=None):
+        """计算 x 序列相对质心的偏移"""
+        if not x_vals or not center_vals:
+            return [0]
+        n = min(len(x_vals), len(center_vals))
+        return [x_vals[i] - center_vals[i] for i in range(n)]
 
     @staticmethod
     def _avg(lst):
@@ -263,8 +465,9 @@ class HoughLogger:
             writer = csv.writer(f)
             writer.writerow([
                 'frame_id', 'area', 'cx', 'cy', 'w', 'h',
-                'hough_cnt', 'thresh', 'angles', 'v_found',
+                'hough_cnt', 'thresh', 'angles', 'v_found', 'hough_v',
                 'angle', 'height', 'arm1', 'arm2', 'base',
+                'bx', 'by', 'cx_e', 'cy_e', 'mid_x', 'mid_y',
                 'lines_data'
             ])
 
@@ -276,6 +479,26 @@ class HoughLogger:
                         continue
 
                     text = line.decode('utf-8', errors='replace').strip()
+
+                    # HDBG 行: 配对拒绝原因统计 (实时打印)
+                    if text.startswith('HDBG,'):
+                        hdbg = self.parse_hdbg_line(text)
+                        if hdbg:
+                            self.hdbg_frames.append(hdbg)
+                            for k in self.hdbg_sum:
+                                self.hdbg_sum[k] += hdbg[k]
+                            if self.hdbg_frames:
+                                last = self.hdbg_frames[-1]
+                                if last['total'] > 0:
+                                    items = [(k, last[k]) for k in [
+                                        'angle_diff','nbhd','bbox','base_w','angle',
+                                        'height','arm','edge','pass']]
+                                    items = [(k, v) for k, v in items if v > 0]
+                                    if items:
+                                        detail = ' '.join(f"{k}={v}" for k, v in items)
+                                        print(f"  [HDBG] frame={last['frame_id']} total={last['total']} | {detail}")
+                        continue
+
                     if not text.startswith('H,'):
                         continue
 
@@ -291,8 +514,11 @@ class HoughLogger:
                     writer.writerow([
                         data['frame_id'], data['area'], data['cx'], data['cy'],
                         data['w'], data['h'], data['hough_cnt'], data['thresh'],
-                        data['angles'], data['v_found'], data['angle'],
+                        data['angles'], data['v_found'], data['hough_v'],
+                        data['angle'],
                         data['height'], data['arm1'], data['arm2'], data['base'],
+                        data['bx'], data['by'], data['cx_e'], data['cy_e'],
+                        data['mid_x'], data['mid_y'],
                         lines_str
                     ])
                     f.flush()

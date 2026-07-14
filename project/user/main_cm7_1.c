@@ -28,16 +28,16 @@ int main(void)
 
 #if IPS_DISPLAY_MODE == 0
         // ======== 模式0: 飞控数据模式 ========
-        ips200_show_string(16*0,  16*5,  "roll=:");  ips200_show_float(16*6, 16*5,  SHARED->disp_roll,   3,5);
-        ips200_show_string(16*0,  16*6,  "pitch=:"); ips200_show_float(16*6, 16*6,  SHARED->disp_pitch,  3,5);
-        ips200_show_string(16*0,  16*7,  "yaw=:");   ips200_show_float(16*6, 16*7,  SHARED->disp_yaw,    3,5);
-        ips200_show_string(16*0,  16*8,  "m1=:");    ips200_show_float(16*6, 16*8,  SHARED->disp_m1,     4,5);
-        ips200_show_string(16*0,  16*9,  "m2=:");    ips200_show_float(16*6, 16*9,  SHARED->disp_m2,     4,5);
-        ips200_show_string(16*0,  16*10, "m3=:");    ips200_show_float(16*6, 16*10, SHARED->disp_m3,     4,5);
-        ips200_show_string(16*0,  16*11, "m4=:");    ips200_show_float(16*6, 16*11, SHARED->disp_m4,     4,5);
-        ips200_show_string(16*0,  16*12, "mag_x=:"); ips200_show_float(16*6, 16*12, SHARED->disp_mag_x,  3,5);
-        ips200_show_string(16*0,  16*13, "of.dx=:"); ips200_show_float(16*6, 16*13, SHARED->disp_of_dx,  3,5);
-        ips200_show_string(16*0,  16*14, "w.vx=:");  ips200_show_float(16*6, 16*14, SHARED->disp_world_vx, 3,5);
+        // ips200_show_string(16*0,  16*5,  "roll=:");  ips200_show_float(16*6, 16*5,  SHARED->disp_roll,   3,5);
+        // ips200_show_string(16*0,  16*6,  "pitch=:"); ips200_show_float(16*6, 16*6,  SHARED->disp_pitch,  3,5);
+        // ips200_show_string(16*0,  16*7,  "yaw=:");   ips200_show_float(16*6, 16*7,  SHARED->disp_yaw,    3,5);
+        // ips200_show_string(16*0,  16*8,  "m1=:");    ips200_show_float(16*6, 16*8,  SHARED->disp_m1,     4,5);
+        // ips200_show_string(16*0,  16*9,  "m2=:");    ips200_show_float(16*6, 16*9,  SHARED->disp_m2,     4,5);
+        // ips200_show_string(16*0,  16*10, "m3=:");    ips200_show_float(16*6, 16*10, SHARED->disp_m3,     4,5);
+        // ips200_show_string(16*0,  16*11, "m4=:");    ips200_show_float(16*6, 16*11, SHARED->disp_m4,     4,5);
+        // ips200_show_string(16*0,  16*12, "mag_x=:"); ips200_show_float(16*6, 16*12, SHARED->disp_mag_x,  3,5);
+        // ips200_show_string(16*0,  16*13, "of.dx=:"); ips200_show_float(16*6, 16*13, SHARED->disp_of_dx,  3,5);
+        // ips200_show_string(16*0,  16*14, "w.vx=:");  ips200_show_float(16*6, 16*14, SHARED->disp_world_vx, 3,5);
         ips200_show_string(16*0,  16*15, "imu.gx=:");ips200_show_float(16*6, 16*15, SHARED->disp_imu_gx, 3,5);
         ips200_show_string(16*0,  16*16, "of.h=:");  ips200_show_float(16*6, 16*16, SHARED->disp_of_height, 3,5);
         ips200_show_string(16*0,  16*17, "tgt=:");   ips200_show_float(16*6, 16*17, SHARED->disp_target,  3,5);

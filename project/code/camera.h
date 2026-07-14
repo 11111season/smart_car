@@ -21,6 +21,8 @@
 
 // 调试开关：0=关闭, 1=每帧打印霍夫变换特征值 (机器可读 CSV, 由 scripts/hough_logger.py 解析)
 #define DEBUG_HOUGH             1
+// DEBUG_HOUGH 打印帧率控制: 每 N 帧打印一次 (N≥1)
+#define DEBUG_HOUGH_DIV         4
 
 #define HEADING_FILTER_ALPHA     0.7f
 
