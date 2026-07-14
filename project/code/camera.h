@@ -14,20 +14,20 @@
 // 分类由软判决评分系统动态决策
 
 // 调试开关：0=关闭, 1=每帧每个blob打印分数
-#define DEBUG_SCORES            0
+#define DEBUG_SCORES            1
 
 // 调试开关：0=关闭, 1=每帧打印 #err_x,err_y,n$ HC06 数据帧
 #define DEBUG_HC06_FRAME        0
+#define DEBUG_REALTIME_MONITOR  0   // 上位机可视化输出 (H, 和 B, 行)
 
-// 调试开关：0=关闭, 1=每帧打印霍夫变换特征值 (机器可读 CSV, 由 scripts/hough_logger.py 解析)
-#define DEBUG_HOUGH             1
-// DEBUG_HOUGH 打印帧率控制: 每 N 帧打印一次 (N≥1)
-#define DEBUG_HOUGH_DIV         4
+// 调试开关：0=关闭 (霍夫检测已废弃)
+#define DEBUG_HOUGH             0
+#define DEBUG_HOUGH_DIV         0
 
 #define HEADING_FILTER_ALPHA     0.7f
 
 // 误差衰减系数 (每帧衰减比例, 0~1, 越小衰减越快)
-#define ERR_DECAY_FACTOR        0.50f
+#define ERR_DECAY_FACTOR        0.85f
 
 // ================= V形车标检测参数 =================
 #define CAR_MARK_MIN_AREA          20      // 车标候选最小面积
@@ -41,16 +41,10 @@
 #define CAR_MARK_MIN_SCORE         55      // 最低车标分类分数
 #define CAR_MARK_DEBUG_DRAW        1       // 1=绘制V形调试叠加到图像
 
-// ================= 霍夫变换后备检测参数 =================
-#define HOUGH_VOTE_THRESH          6       // 投票阈值 (原6→5噪声过多,回退)
-#define HOUGH_ANGLE_STEP           2       // 角度扫描步长 (度), 提高分辨率 (原3)
-#define HOUGH_ANGLE_MIN            5       // 最小扫描角度 (度)
-#define HOUGH_ANGLE_MAX            65      // 最大扫描角度 (度)
-#define HOUGH_ROI_MARGIN           10      // ROI外扩像素
+// ================= V形车标检测参数（霍夫变换已废弃） =================
 
-// ================= 信标/车标碎片抑制参数 =================
+// ================= 信标锁定参数 =================
 #define BEACON_CONFIRM_FRAMES      3       // 信标锁定所需连续确认帧数
-#define FRAG_MARKER_BONUS          20      // 长条形碎片的保底车标分 (无V形特征时)
 
 // ================= 控制参数配置 =================
 #define DEADZONE_X          10
@@ -92,7 +86,7 @@ typedef struct
     int16  debug_car_angle;         // 最优小车标记的 V 形角度 (度)
     uint8  debug_car_method;        // 检测方式: 0=未检测到, 1=BFS, 2=霍夫后备
     uint8  debug_car_track_id;      // 最优小车标记的跟踪 ID
-} vision_share_t;
+  } vision_share_t;
 
 // ================= 接口函数声明 =================
 void camera_init(void);

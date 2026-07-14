@@ -81,11 +81,19 @@ class HoughLogger:
         self.c_drift_list = []    # C 点帧间位移列表
         self.endpoint_frame_ids = []   # 记录端点时的 frame_id
 
+        # ---- 信标数据 ----
+        self.beacon_list = []     # 信标数据: {frame_id, area, cx, cy, w, h, score, filt_score, core, height}
+
         # ---- HDBG 配对拒绝原因统计 ----
         self.hdbg_frames = []
         self.hdbg_sum = {k: 0 for k in [
             'total', 'angle_diff', 'parallel', 'oob', 'nbhd', 'bbox',
             'base_w', 'angle', 'height', 'arm', 'edge', 'pass']}
+
+        # ---- DEBUG_SCORES 数据 ----
+        self.scores_list = []       # 所有分数行
+        self.type_switches = []     # 类型切换事件
+        self.prev_types = {}        # 上一帧 track_id → type
 
         self.start_time = None
 
@@ -111,17 +119,22 @@ class HoughLogger:
         if self.ser and self.ser.is_open:
             self.ser.close()
             print(f"\n[串口] 已关闭 {self.port}")
+        if hasattr(self, 'beacon_csv_file') and self.beacon_csv_file:
+            try:
+                self.beacon_csv_file.close()
+            except:
+                pass
 
     def parse_line(self, line: str):
         """
         解析 H, 行
         格式: H,frame_id,area,cx,cy,w,h,hough_cnt,thresh,angles,
              v_found,angle,height,arm1,arm2,base,
-             bx,by,cx_e,cy_e,mid_x,mid_y,        ← 端点坐标 (新增)
+             bx,by,cx_e,cy_e,mid_x,mid_y,raw_mid_x,raw_mid_y,convex_ratio,
              rho0,theta0,votes0,rho1,theta1,...
         """
         parts = line.strip().split(',')
-        if len(parts) < 23 or parts[0] != 'H':
+        if len(parts) < 30 or parts[0] != 'H':
             return None
         try:
             data = {
@@ -147,10 +160,17 @@ class HoughLogger:
                 'cy_e': int(parts[20]),
                 'mid_x': int(parts[21]),
                 'mid_y': int(parts[22]),
+                'raw_mid_x': int(parts[23]),  # EMA 平滑前底边中点
+                'raw_mid_y': int(parts[24]),
+                'convex_ratio': int(parts[25]),  # 凸包面积比 (%)
+                'dist_std_ratio': int(parts[26]), # 轮廓距离标准差比 (%)
+                'conv_mean_def': int(parts[27]),  # 平均凸度缺陷 (0-100)
+                'conv_max_def': int(parts[28]),  # 最大凸度缺陷 (0-100)
+                'conv_gt2_pct': int(parts[29]),  # 缺陷>2px的点占比(%)
                 'lines': []
             }
             # 解析直线数据: 每3个字段一组 (rho, theta, votes)
-            i = 23
+            i = 30
             while i + 2 < len(parts):
                 data['lines'].append({
                     'rho': int(parts[i]),
@@ -189,6 +209,68 @@ class HoughLogger:
         except (ValueError, IndexError):
             return None
 
+    def parse_beacon_line(self, line: str):
+        """
+        解析 B, 行 (信标数据)
+        格式: B,frame_id,area,cx,cy,width,height,raw_score,filt_score,core,oheight,conv_mean_def,conv_max_def,conv_gt2_pct
+        """
+        parts = line.strip().split(',')
+        if len(parts) < 16 or parts[0] != 'B':
+            return None
+        try:
+            return {
+                'frame_id': int(parts[1]),
+                'area': int(parts[2]),
+                'cx': int(parts[3]),
+                'cy': int(parts[4]),
+                'w': int(parts[5]),
+                'h': int(parts[6]),
+                'raw_score': int(parts[7]),
+                'filt_score': int(parts[8]),
+                'core': int(parts[9]),
+                'oheight': int(parts[10]),
+                'owidth': int(parts[11]),
+                'conv_mean_def': int(parts[12]),
+                'conv_max_def': int(parts[13]),
+                'conv_gt2_pct': int(parts[14]),
+                'convex_ratio': int(parts[15]),
+            }
+        except (ValueError, IndexError):
+            return None
+
+    def parse_scores_line(self, line: str):
+        """
+        解析 DEBUG_SCORES 行
+        格式: frame_id,blob_num, track_id0,area0,core_ratio0,aspect0,raw_beacon0,raw_marker0,filt_beacon0,filt_marker0,type0, ...
+        type: 0=UNKNOWN, 1=BEACON, 2=CAR_MARKER
+        """
+        parts = line.strip().split(',')
+        if len(parts) < 4 or not parts[0].isdigit():
+            return None
+        try:
+            fid = int(parts[0])
+            bn = int(parts[1])
+            blobs = []
+            idx = 2
+            for _ in range(min(bn, 5)):
+                if idx + 8 >= len(parts):
+                    break
+                blobs.append({
+                    'track_id': int(parts[idx]),
+                    'area': int(parts[idx+1]),
+                    'core_ratio': int(parts[idx+2]),
+                    'aspect': int(parts[idx+3]),
+                    'raw_beacon': int(parts[idx+4]),
+                    'raw_marker': int(parts[idx+5]),
+                    'filt_beacon': int(parts[idx+6]),
+                    'filt_marker': int(parts[idx+7]),
+                    'type': int(parts[idx+8]),
+                })
+                idx += 9
+            return {'frame_id': fid, 'blob_num': bn, 'blobs': blobs}
+        except (ValueError, IndexError):
+            return None
+
     def update_stats(self, data: dict):
         """更新统计数据"""
         self.total_blobs += 1
@@ -214,6 +296,24 @@ class HoughLogger:
             self.endpoint_mx.append(data['mid_x'])
             self.endpoint_my.append(data['mid_y'])
             self.endpoint_frame_ids.append(data['frame_id'])
+
+            # ---- 原始坐标记录 (诊断) ----
+            if not hasattr(self, 'raw_mid_x_list'):
+                self.raw_mid_x_list = []
+                self.raw_mid_y_list = []
+            if data.get('raw_mid_x', 0) != 0 or data.get('raw_mid_y', 0) != 0:
+                self.raw_mid_x_list.append(data['raw_mid_x'])
+                self.raw_mid_y_list.append(data['raw_mid_y'])
+
+            # ---- 凸包比收集 ----
+            if not hasattr(self, 'convex_ratio_list'):
+                self.convex_ratio_list = []
+            self.convex_ratio_list.append(data.get('convex_ratio', 100))
+
+            # ---- 距离标准差比收集 ----
+            if not hasattr(self, 'dist_std_ratio_list'):
+                self.dist_std_ratio_list = []
+            self.dist_std_ratio_list.append(data.get('dist_std_ratio', 0))
 
             # ---- 帧间漂移计算 ----
             if self.prev_bx is not None:
@@ -265,6 +365,53 @@ class HoughLogger:
         elapsed = time.time() - self.start_time if self.start_time else 0
         print("\n" + "=" * 60)
         print("                    霍夫变换特征统计摘要")
+        # ---- DEBUG_SCORES 分类统计 ----
+        if self.scores_list:
+            print("  ── DEBUG_SCORES 分类统计 ──")
+            print(f"    有效帧数        : {len(self.scores_list)}")
+            # 统计各类型的 blob 出现次数
+            type_counts = {0: 0, 1: 0, 2: 0}
+            tnames = {0: 'UNKNOWN', 1: 'BEACON', 2: 'CAR_MARKER'}
+            for s in self.scores_list:
+                for b in s['blobs']:
+                    type_counts[b['type']] = type_counts.get(b['type'], 0) + 1
+            total_blob_occur = sum(type_counts.values())
+            if total_blob_occur > 0:
+                for t in [1, 2, 0]:
+                    n = type_counts.get(t, 0)
+                    pct = n / total_blob_occur * 100
+                    print(f"    {tnames[t]:12s}: {n:5d} ({pct:5.1f}%)")
+            # 类型切换事件
+            if self.type_switches:
+                print(f"\n    ⚠️ 类型切换事件 ({len(self.type_switches)} 次):")
+                for fid, tid, old, new in self.type_switches[-10:]:
+                    print(f"      frame={fid} T{tid}: {old}→{new}")
+            print()
+
+        # ---- 凸包比统计 ----
+        if hasattr(self, 'convex_ratio_list') and len(self.convex_ratio_list) > 0:
+            crs = self.convex_ratio_list
+            avg_cr = sum(crs) / len(crs)
+            min_cr = min(crs)
+            max_cr = max(crs)
+            concave = sum(1 for c in crs if c < 85)
+            print("  ── 凸包面积比统计 ──")
+            print(f"    平均: {avg_cr:.1f}%  最小: {min_cr}%  最大: {max_cr}%")
+            print(f"    凹形(凸包比<85): {concave}/{len(crs)} ({concave*100/len(crs):.0f}%)")
+            print()
+
+        # ---- 距离标准差比统计 ----
+        if hasattr(self, 'dist_std_ratio_list') and len(self.dist_std_ratio_list) > 0:
+            srs = self.dist_std_ratio_list
+            avg_sr = sum(srs) / len(srs)
+            min_sr = min(srs)
+            max_sr = max(srs)
+            slender = sum(1 for s in srs if s > 35)
+            print("  ── 距离标准差比统计 (V形>35) ──")
+            print(f"    平均: {avg_sr:.1f}%  最小: {min_sr}%  最大: {max_sr}%")
+            print(f"    V形特征(>35): {slender}/{len(srs)} ({slender*100/len(srs):.0f}%)")
+            print()
+
         print("=" * 60)
         print(f"  录制时长        : {elapsed:.1f} 秒")
         print(f"  总帧数          : {self.total_frames}")
@@ -278,6 +425,20 @@ class HoughLogger:
             hough_rate = self.hough_v_count / self.total_blobs * 100
             print(f"  霍夫验证通过率   : {hough_rate:.1f}% ({self.hough_v_count}/{self.total_blobs})")
             print(f"  (v_found=1但hough_v=0 → 可能是圆形信标)")
+
+        # 信标统计
+        if self.beacon_list:
+            bcx = [b['cx'] for b in self.beacon_list]
+            bcy = [b['cy'] for b in self.beacon_list]
+            barea = [b['area'] for b in self.beacon_list]
+            bscore = [b['filt_score'] for b in self.beacon_list]
+            print()
+            print(f"  ── 信标数据 ({len(self.beacon_list)} 帧) ──")
+            print(f"    位置 X         : 均值={self._avg(bcx):.0f}  范围=[{min(bcx)},{max(bcx)}]")
+            print(f"    位置 Y         : 均值={self._avg(bcy):.0f}  范围=[{min(bcy)},{max(bcy)}]")
+            print(f"    面积           : 均值={self._avg(barea):.0f}  范围=[{min(barea)},{max(barea)}]")
+            print(f"    滤波分数       : 均值={self._avg(bscore):.1f}  范围=[{min(bscore)},{max(bscore)}]")
+            print()
 
         # 帧率估算 (基于总帧数)
         if elapsed > 0:
@@ -325,6 +486,25 @@ class HoughLogger:
                   f"范围=[{min(self.endpoint_mx)},{max(self.endpoint_mx)}]")
             print(f"                    : y 均值={self._avg(self.endpoint_my):.0f}  "
                   f"范围=[{min(self.endpoint_my)},{max(self.endpoint_my)}]")
+
+            # ---- 原始 vs 平滑坐标对比 (诊断"卡住"问题) ----
+            if hasattr(self, 'raw_mid_x_list') and len(self.raw_mid_x_list) > 0:
+                print()
+                print("  ── 原始 vs 平滑坐标诊断 ──")
+                delta_list = [math.sqrt((sx-rx)**2 + (sy-ry)**2)
+                              for rx, ry, sx, sy in zip(self.raw_mid_x_list, self.raw_mid_y_list,
+                                                        self.endpoint_mx, self.endpoint_my)]
+                print(f"    平滑-原始偏离 : 均值={self._avg(delta_list):.1f}  "
+                      f"最大={max(delta_list):.1f} px")
+                stuck = sum(1 for d in delta_list if d > 5)
+                print(f"    偏离>5px      : {stuck}/{len(delta_list)}")
+                # 找偏离大的帧
+                for i, d in enumerate(delta_list):
+                    if d > 10:
+                        print(f"    frame={self.endpoint_frame_ids[i]}  "
+                              f"raw=({self.raw_mid_x_list[i]},{self.raw_mid_y_list[i]})  "
+                              f"smoothed=({self.endpoint_mx[i]},{self.endpoint_my[i]})  "
+                              f"delta={d:.0f}px")
 
             # 端点相对于图像中心的偏移 (判断端点是否偏到角落)
             print()
@@ -461,6 +641,10 @@ class HoughLogger:
         # 注册信号处理 (Ctrl+C)
         signal.signal(signal.SIGINT, lambda s, f: setattr(self, 'running', False))
 
+        # 信标 CSV 文件 (记录 B 行凸度数据)
+        beacon_csv_file = self.output_file.replace('.csv', '_beacon.csv')
+        self.beacon_csv_writer = None
+
         with open(self.output_file, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow([
@@ -468,8 +652,22 @@ class HoughLogger:
                 'hough_cnt', 'thresh', 'angles', 'v_found', 'hough_v',
                 'angle', 'height', 'arm1', 'arm2', 'base',
                 'bx', 'by', 'cx_e', 'cy_e', 'mid_x', 'mid_y',
+                'raw_mid_x', 'raw_mid_y', 'convex_ratio', 'dist_std_ratio',
+                'conv_mean_def', 'conv_max_def', 'conv_gt2_pct',
                 'lines_data'
             ])
+
+            # 信标 CSV
+            bf = open(beacon_csv_file, 'w', newline='', encoding='utf-8')
+            self.beacon_csv_writer = csv.writer(bf)
+            self.beacon_csv_file = bf  # 保存用于 flush
+            self.beacon_csv_writer.writerow([
+                'frame_id', 'area', 'cx', 'cy', 'w', 'h',
+                'raw_score', 'filt_score', 'core', 'oheight', 'owidth',
+                'conv_mean_def', 'conv_max_def', 'conv_gt2_pct',
+                'convex_ratio',
+            ])
+            bf.flush()
 
             while self.running:
                 try:
@@ -499,6 +697,69 @@ class HoughLogger:
                                         print(f"  [HDBG] frame={last['frame_id']} total={last['total']} | {detail}")
                         continue
 
+                    # STUCK 诊断行: 实时打印 (在 H 行过滤之前)
+                    if text.startswith('STUCK,'):
+                        parts = text.split(',')
+                        if len(parts) >= 13:
+                            print(f"  [STUCK] frame={parts[1]} mid=({parts[2]},{parts[3]}) "
+                                  f"vert=({parts[4]},{parts[5]}) cen=({parts[6]},{parts[7]}) "
+                                  f"B=({parts[8]},{parts[9]}) C=({parts[10]},{parts[11]}) "
+                                  f"area={parts[12]}")
+                        continue
+
+                    # DEBUG_SCORES 行: 打印每个 blob 的分数和分类
+                    if text[0].isdigit() and not text.startswith('H,'):
+                        sdata = self.parse_scores_line(text)
+                        if sdata:
+                            self.scores_list.append(sdata)
+                            tnames = {0: '?', 1: 'B', 2: 'C'}
+                            # 检测类型切换
+                            blobs_str = []
+                            for b in sdata['blobs']:
+                                tid = b['track_id']
+                                tname = tnames.get(b['type'], '?')
+                                # 检查与前帧相比类型是否切换
+                                if tid in self.prev_types and self.prev_types[tid] != b['type']:
+                                    old = tnames.get(self.prev_types[tid], '?')
+                                    new = tnames.get(b['type'], '?')
+                                    self.type_switches.append((sdata['frame_id'], tid, old, new))
+                                blobs_str.append(f"T{tid}:B={b['filt_beacon']} C={b['filt_marker']}→{tname}")
+                            self.prev_types = {b['track_id']: b['type'] for b in sdata['blobs']}
+                            print(f"  [分数#{sdata['frame_id']}] " + " | ".join(blobs_str))
+                            # 实时打印类型切换
+                            if self.type_switches and self.type_switches[-1][0] == sdata['frame_id']:
+                                _, tid, old_t, new_t = self.type_switches[-1]
+                                print(f"  ⚠️ 类型切换: T{tid}: {old_t}→{new_t}")
+                        continue
+
+                    if text.startswith('B,'):
+                        bcon = self.parse_beacon_line(text)
+                        if bcon:
+                            self.beacon_list.append(bcon)
+                            # 写入信标 CSV
+                            if self.beacon_csv_writer:
+                                self.beacon_csv_writer.writerow([
+                                    bcon['frame_id'], bcon['area'],
+                                    bcon['cx'], bcon['cy'],
+                                    bcon['w'], bcon['h'],
+                                    bcon['raw_score'], bcon['filt_score'],
+                                    bcon['core'], bcon['oheight'],
+                                    bcon['owidth'],
+                                    bcon['conv_mean_def'],
+                                    bcon['conv_max_def'],
+                                    bcon['conv_gt2_pct'],
+                                    bcon['convex_ratio'],
+                                ])
+                                self.beacon_csv_file.flush()
+                            # 单行实时显示简洁的信标信息 + 凸度
+                            print(f"  [信标] frame={bcon['frame_id']} "
+                                  f"pos=({bcon['cx']},{bcon['cy']}) area={bcon['area']} "
+                                  f"score={bcon['filt_score']} "
+                                  f"凸比={bcon['convex_ratio']}% "
+                                  f"core={bcon['core']} "
+                                  f"方向宽高比={bcon['owidth']}/{bcon['oheight']}={bcon['owidth']*100//max(bcon['oheight'],1)}%")
+                        continue
+
                     if not text.startswith('H,'):
                         continue
 
@@ -519,6 +780,12 @@ class HoughLogger:
                         data['height'], data['arm1'], data['arm2'], data['base'],
                         data['bx'], data['by'], data['cx_e'], data['cy_e'],
                         data['mid_x'], data['mid_y'],
+                        data['raw_mid_x'], data['raw_mid_y'],
+                        data['convex_ratio'],
+                        data.get('dist_std_ratio', 0),
+                        data['conv_mean_def'],
+                        data['conv_max_def'],
+                        data['conv_gt2_pct'],
                         lines_str
                     ])
                     f.flush()

@@ -50,8 +50,7 @@ typedef enum
     BLOB_CAR_MARKER       // V形车标
 } BlobType;
 
-// 霍夫变换最大直线数 (需要在 Blob 定义之前)
-#define HOUGH_MAX_LINES   8
+// 凸包面积比阈值等
 
 // 新增：Blob 统一数据结构
 typedef struct
@@ -62,7 +61,7 @@ typedef struct
     uint16 height;
     uint16 area;
     uint16 core_count;
-    BlobType type;
+    uint8 type;              // 用 uint8 而非 BlobType 避免 IAR 4 字节枚举对齐; 赋值时用 BLOB_UNKNOWN/BEACON/CAR_MARKER
     uint16 owidth;    // 带方向的最小外接矩形宽度
     uint16 oheight;   // 带方向的最小外接矩形高度
 
@@ -91,14 +90,14 @@ typedef struct
     uint16 marker_arm2_len;              // 臂长 A-C
     float  marker_heading;               // 车头方向 (D→A)
     float  theta;                        // 主轴角度 (rad), 用于碎片配对
-    uint8  marker_hough_v;               // 1=霍夫变换确认的 V 形 (优先于软评分)
-#if DEBUG_HOUGH
-    uint8  dbg_hough_cnt;                // 霍夫直线数 (供延迟打印)
-    uint8  dbg_hough_num_angles;         // 霍夫扫描角度数
-    int16  dbg_hough_rho[HOUGH_MAX_LINES];
-    int8   dbg_hough_theta[HOUGH_MAX_LINES];
-    uint16 dbg_hough_votes[HOUGH_MAX_LINES];
-#endif
+    uint8  marker_convex_ratio;          // 凸包面积比 (blob面积/凸包面积*100), 凹形<85
+    uint8  marker_dist_std_ratio;        // 轮廓距离标准差比 (std/mean*100), V形>35, 圆形<20
+    // 凸度统计 (debug): 每个轮廓点到凸包边的平均距离(0-100归一化)
+    uint8  dbg_conv_mean_def;            // 平均凸度缺陷 (0-100)
+    uint8  dbg_conv_max_def;             // 最大凸度缺陷 (0-100)
+    uint8  dbg_conv_gt2_pct;             // 缺陷>2px的点占比(%)
+    uint16 dbg_raw_mid_x;                // EMA 平滑前的底边中点 x (诊断)
+    uint16 dbg_raw_mid_y;                // EMA 平滑前的底边中点 y (诊断)
 } Blob;
 
 // ======================== 双核共享内存区 ========================
@@ -208,533 +207,6 @@ void draw_white_cross(uint8 cx, uint8 cy)
     }
 }
 
-/*
- * =============================================================================
- * 霍夫变换后备方案 - 用于 BFS 几何法因遮挡/分裂而失败的场景
- * 当 V 形被部分遮挡，分裂为 √ 形 + 小条时，霍夫可在图像级跨 blob 找到两条臂
- * =============================================================================
- */
-
-// 边缘点缓存 (由 extract_edges_once 填充, 供 Hough 使用)
-#define MAX_EDGE_POINTS   3000
-static Point edge_pts[MAX_EDGE_POINTS];
-static uint32 edge_cnt = 0;
-
-// 霍夫直线结构
-typedef struct {
-    int16 rho;
-    int8  theta_deg;
-    uint16 votes;
-} HoughLine;
-
-// 霍夫 rho 直方图 (静态全局, 避免栈溢出)
-#define RHO_HIST_SIZE     641     // rho 范围 [-320, +320], 偏移 +320 后索引 [0, 640]
-#define RHO_HIST_OFFSET   320
-static uint16 rho_hist[RHO_HIST_SIZE];
-
-/*
- * -----------------------------------------------------------------------------
- * extract_edges_once - 全局边缘提取 (每帧调用一次)
- * -----------------------------------------------------------------------------
- * 功能: 在二值化后的 image_buffer 上检测 0↔255 的跳变，提取边缘点
- * 位置: 在 camera_process() 中二值化之后、extract_blobs() 之前调用
- * 输出: edge_pts[] 数组 + edge_cnt
- * -----------------------------------------------------------------------------
- */
-static void extract_edges_once(void)
-{
-    edge_cnt = 0;
-    for (uint16 y = 1; y < CAMERA_H - 1; y++)
-    {
-        for (uint16 x = 1; x < CAMERA_W - 1; x++)
-        {
-            // 检测水平或垂直方向上的二值跳变 (0→255 或 255→0)
-            if (image_buffer[y][x] != image_buffer[y][x-1] ||
-                image_buffer[y][x] != image_buffer[y-1][x])
-            {
-                // 只保留白色侧的边缘点 (V 形主体), 提高信噪比
-                if (image_buffer[y][x] == 255)
-                {
-                    edge_pts[edge_cnt].x = x;
-                    edge_pts[edge_cnt].y = y;
-                    edge_cnt++;
-                    if (edge_cnt >= MAX_EDGE_POINTS) return;
-                }
-            }
-        }
-    }
-}
-
-/*
- * -----------------------------------------------------------------------------
- * hough_transform_roi - 局部霍夫变换 (在指定 ROI 内找直线)
- * -----------------------------------------------------------------------------
- * 输入:
- *   cx, cy       - ROI 中心 (一般用 blob 质心)
- *   half_w, half_h - ROI 半宽半高 (以包含相邻碎片 blob)
- *   theta_list   - 要扫描的角度列表 (度)
- *   num_theta    - 角度个数
- *   vote_thresh  - 投票阈值
- * 输出:
- *   lines[]      - 检测到的直线数组
- *   返回值       - 检测到的直线数
- * -----------------------------------------------------------------------------
- */
-static uint8 hough_transform_roi(uint16 cx, uint16 cy,
-                                 uint16 half_w, uint16 half_h,
-                                 const int8 *theta_list, uint8 num_theta,
-                                 uint16 vote_thresh,
-                                 HoughLine *lines, uint8 max_lines)
-{
-    // 计算 ROI 边界
-    int16 x_min = (int16)cx - (int16)half_w;
-    if (x_min < 0) x_min = 0;
-    int16 x_max = (int16)cx + (int16)half_w;
-    if (x_max >= CAMERA_W) x_max = CAMERA_W - 1;
-    int16 y_min = (int16)cy - (int16)half_h;
-    if (y_min < 0) y_min = 0;
-    int16 y_max = (int16)cy + (int16)half_h;
-    if (y_max >= CAMERA_H) y_max = CAMERA_H - 1;
-
-    uint8 line_cnt = 0;
-
-    for (uint8 a = 0; a < num_theta; a++)
-    {
-        int8 theta_deg = theta_list[a];
-        float rad = (float)theta_deg * 0.0174532925f;  // π/180
-        float cos_t = cosf(rad);
-        float sin_t = sinf(rad);
-
-        // 清零直方图 (只清零可能用到的 bin)
-        memset(rho_hist, 0, sizeof(rho_hist));
-
-        uint16 max_votes = 0;
-        int16 best_rho = 0;
-
-        // 遍历 ROI 内的边缘点
-        for (uint32 i = 0; i < edge_cnt; i++)
-        {
-            uint16 ex = edge_pts[i].x;
-            uint16 ey = edge_pts[i].y;
-            if (ex < (uint16)x_min || ex > (uint16)x_max ||
-                ey < (uint16)y_min || ey > (uint16)y_max) continue;
-
-            int16 rho = (int16)((float)ex * cos_t + (float)ey * sin_t);
-            int16 idx = rho + RHO_HIST_OFFSET;
-            if (idx < 0 || idx >= RHO_HIST_SIZE) continue;
-
-            rho_hist[idx]++;
-            if (rho_hist[idx] > max_votes)
-            {
-                max_votes = rho_hist[idx];
-                best_rho = rho;
-            }
-        }
-
-        if (max_votes >= vote_thresh)
-        {
-            lines[line_cnt].rho = best_rho;
-            lines[line_cnt].theta_deg = theta_deg;
-            lines[line_cnt].votes = max_votes;
-            line_cnt++;
-            if (line_cnt >= max_lines) break;
-        }
-    }
-    return line_cnt;
-}
-
-/*
- * -----------------------------------------------------------------------------
- * find_v_from_hough - 从霍夫直线中寻找 V 形配对
- * -----------------------------------------------------------------------------
- * 功能: 从检测到的直线中找一对斜率相反 (一正一负) 且交点合理的直线,
- *       作为 V 形的两条臂, 然后计算 V 形的几何特征.
- * 输入:
- *   lines[]      - 霍夫检测到的直线
- *   line_cnt     - 直线数
- * 输出:
- *   b            - 填充 Blob 的 V 形特征字段
- * 返回值: 1=成功, 0=失败
- * -----------------------------------------------------------------------------
- */
-static uint8 find_v_from_hough(const HoughLine *lines, uint8 line_cnt, Blob *b)
-{
-    static float st_angle = 0.0f;     // 帧间追踪: 上一帧的 V 形角度
-    static uint8  st_valid = 0;        // 0=无上一帧, 1=有上一帧
-
-    float best_score = 0.0f;
-    uint8 best_i = 0xFF, best_j = 0xFF;
-    float b_ax, b_ay, b_bx, b_by, b_cx, b_cy;
-    float b_arm1, b_arm2, b_angle_deg, b_height, b_base_w;
-
-    // ★ 调试: 配对拒绝原因计数
-    uint16 dbg_total = 0;       // 总配对尝试数
-    uint16 dbg_angle_diff = 0;  // θ差异不满足V形范围
-    uint16 dbg_parallel = 0;    // 平行线(行列式≈0)
-    uint16 dbg_oob = 0;         // 交点超出图像边界
-    uint16 dbg_nbhd = 0;        // 3×3邻域白像素不足
-    uint16 dbg_bbox = 0;        // 端点超出blob外接矩形
-    uint16 dbg_base_w = 0;      // 底边宽度不合理
-    uint16 dbg_angle = 0;       // 顶点角度不满足范围
-    uint16 dbg_height = 0;      // 高度不足
-    uint16 dbg_arm = 0;         // 臂长<4(交叉配对)
-    uint16 dbg_edge = 0;        // 靠近图像边界
-    uint16 dbg_pass = 0;        // 通过所有过滤的配对
-
-    for (uint8 i = 0; i < line_cnt; i++)
-    {
-        for (uint8 j = i + 1; j < line_cnt; j++)
-        {
-            // 要求两条直线夹角在 V 形范围内 (12°~90°)
-            // θ差异太小→平行无法形成V；θ差异太大→过于尖锐不可能是车标
-            {
-                dbg_total++;
-                int8 diff = lines[i].theta_deg - lines[j].theta_deg;
-                if (diff < 0) diff = -diff;
-                if (diff < (int8)CAR_MARK_MIN_ANGLE_DEG || diff > (int8)CAR_MARK_MAX_ANGLE_DEG)
-                    { dbg_angle_diff++; continue; }
-            }
-
-            // 两条直线方程: x*cosθ + y*sinθ = ρ
-            float cos1 = cosf((float)lines[i].theta_deg * 0.0174532925f);
-            float sin1 = sinf((float)lines[i].theta_deg * 0.0174532925f);
-            float cos2 = cosf((float)lines[j].theta_deg * 0.0174532925f);
-            float sin2 = sinf((float)lines[j].theta_deg * 0.0174532925f);
-
-            // 解交点 (顶点 A)
-            float det = cos1 * sin2 - cos2 * sin1;
-            if (fabsf(det) < 0.001f) { dbg_parallel++; continue; }   // 平行, 跳过
-
-            float ax = ((float)lines[i].rho * sin2 - (float)lines[j].rho * sin1) / det;
-            float ay = ((float)lines[j].rho * cos1 - (float)lines[i].rho * cos2) / det;
-
-            // 交点必须在 ROI 内
-            if (ax < 0 || ax >= (float)CAMERA_W || ay < 0 || ay >= (float)CAMERA_H)
-                { dbg_oob++; continue; }
-
-            // ★★★ 双向追踪: 沿直线两个方向追踪, 取找到白点多的那一侧
-            // 消除"追踪方向翻转"导致的端点乱飘
-            // 含间隙检测: 连续5黑像素即停止, 防止跨过间隙跳到远处噪声
-            float dx1 = -sin1, dy1 = cos1;    // 线1正向
-            float dx2 = -sin2, dy2 = cos2;    // 线2正向
-
-            // --- 线1: 正向追踪 ---
-            float bx_fwd = ax, by_fwd = ay;
-            int cnt_fwd = 0, gap_fwd = 0;
-            for (float t = 0; t < 200; t += 1.0f) {
-                float x = ax + dx1 * t;
-                float y = ay + dy1 * t;
-                int ix = (int)x, iy = (int)y;
-                if (ix < 0 || ix >= CAMERA_W || iy < 0 || iy >= CAMERA_H) break;
-                if (image_buffer[iy][ix] == 255) { bx_fwd = x; by_fwd = y; cnt_fwd++; gap_fwd = 0; }
-                else { gap_fwd++; if (gap_fwd >= 5) break; }
-            }
-            // --- 线1: 反向追踪 ---
-            float bx_bwd = ax, by_bwd = ay;
-            int cnt_bwd = 0, gap_bwd = 0;
-            for (float t = 0; t < 200; t += 1.0f) {
-                float x = ax - dx1 * t;
-                float y = ay - dy1 * t;
-                int ix = (int)x, iy = (int)y;
-                if (ix < 0 || ix >= CAMERA_W || iy < 0 || iy >= CAMERA_H) break;
-                if (image_buffer[iy][ix] == 255) { bx_bwd = x; by_bwd = y; cnt_bwd++; gap_bwd = 0; }
-                else { gap_bwd++; if (gap_bwd >= 5) break; }
-            }
-            float bx = (cnt_fwd >= cnt_bwd) ? bx_fwd : bx_bwd;
-            float by = (cnt_fwd >= cnt_bwd) ? by_fwd : by_bwd;
-
-            // --- 线2: 正向追踪 ---
-            float cx_fwd = ax, cy_fwd = ay;
-            cnt_fwd = 0; gap_fwd = 0;
-            for (float t = 0; t < 200; t += 1.0f) {
-                float x = ax + dx2 * t;
-                float y = ay + dy2 * t;
-                int ix = (int)x, iy = (int)y;
-                if (ix < 0 || ix >= CAMERA_W || iy < 0 || iy >= CAMERA_H) break;
-                if (image_buffer[iy][ix] == 255) { cx_fwd = x; cy_fwd = y; cnt_fwd++; gap_fwd = 0; }
-                else { gap_fwd++; if (gap_fwd >= 5) break; }
-            }
-            // --- 线2: 反向追踪 ---
-            float cx_bwd = ax, cy_bwd = ay;
-            cnt_bwd = 0; gap_bwd = 0;
-            for (float t = 0; t < 200; t += 1.0f) {
-                float x = ax - dx2 * t;
-                float y = ay - dy2 * t;
-                int ix = (int)x, iy = (int)y;
-                if (ix < 0 || ix >= CAMERA_W || iy < 0 || iy >= CAMERA_H) break;
-                if (image_buffer[iy][ix] == 255) { cx_bwd = x; cy_bwd = y; cnt_bwd++; gap_bwd = 0; }
-                else { gap_bwd++; if (gap_bwd >= 5) break; }
-            }
-            float cx = (cnt_fwd >= cnt_bwd) ? cx_fwd : cx_bwd;
-            float cy = (cnt_fwd >= cnt_bwd) ? cy_fwd : cy_bwd;
-
-            // ★★★ 端点邻域噪点过滤: 3×3 窗口内至少 4 个白像素才接受
-            // 孤立噪点周围没有足够白像素支撑, 不可能是 V 形臂端点
-            {
-                int ibx = (int)(bx + 0.5f), iby = (int)(by + 0.5f);
-                int icx = (int)(cx + 0.5f), icy = (int)(cy + 0.5f);
-                int sup_b = 0, sup_c = 0;
-                for (int dy = -1; dy <= 1; dy++) {
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int sx, sy;
-                        sx = ibx + dx; sy = iby + dy;
-                        if (sx >= 0 && sx < CAMERA_W && sy >= 0 && sy < CAMERA_H &&
-                            image_buffer[sy][sx] == 255) sup_b++;
-                        sx = icx + dx; sy = icy + dy;
-                        if (sx >= 0 && sx < CAMERA_W && sy >= 0 && sy < CAMERA_H &&
-                            image_buffer[sy][sx] == 255) sup_c++;
-                    }
-                }
-                if (sup_b < 2 || sup_c < 2) { dbg_nbhd++; continue; }
-            }
-
-            // 端点验证: B、C 都必须在 blob 外接矩形 ±15px 内
-            {
-                uint16 bbl = (b->cx > b->width/2)  ? b->cx - b->width/2  : 0;
-                uint16 bbr = (b->cx + b->width/2  < CAMERA_W-1) ? b->cx + b->width/2  : CAMERA_W-1;
-                uint16 bbt = (b->cy > b->height/2) ? b->cy - b->height/2 : 0;
-                uint16 bbb = (b->cy + b->height/2 < CAMERA_H-1) ? b->cy + b->height/2 : CAMERA_H-1;
-                if (bx < (int16)bbl - 15 || bx > (int16)bbr + 15 ||
-                    by < (int16)bbt - 15 || by > (int16)bbb + 15 ||
-                    cx < (int16)bbl - 15 || cx > (int16)bbr + 15 ||
-                    cy < (int16)bbt - 15 || cy > (int16)bbb + 15)
-                    { dbg_bbox++; continue; }
-            }
-
-            // 使用追踪到的实际端点位置
-            float mid_x = (bx + cx) * 0.5f;
-            float mid_y = (by + cy) * 0.5f;
-
-            // 底边宽度检查 (太窄或太宽都不合理)
-            float base_w = fabsf(bx - cx);
-            if (base_w < 5.0f || base_w > (float)CAMERA_W * 0.8f) { dbg_base_w++; continue; }
-
-            // 臂长检查: 顶点到实际追踪到的底边端点
-            float arm1 = sqrtf((ax - bx) * (ax - bx) + (ay - by) * (ay - by));
-            float arm2 = sqrtf((ax - cx) * (ax - cx) + (ay - cy) * (ay - cy));
-
-            // 顶点夹角 (余弦定理) — 用实际追踪到的底边端点
-            float dot = (bx - ax) * (cx - ax) + (by - ay) * (cy - ay);
-            float cos_a = dot / (arm1 * arm2);
-            if (cos_a > 1.0f) cos_a = 1.0f;
-            if (cos_a < -1.0f) cos_a = -1.0f;
-            float angle_deg = acosf(cos_a) * 57.2957795f;
-            if (angle_deg < (float)CAR_MARK_MIN_ANGLE_DEG ||
-                angle_deg > (float)CAR_MARK_MAX_ANGLE_DEG) { dbg_angle++; continue; }
-
-            // 顶点到底边的垂距
-            float height = arm1 * sinf(acosf(cos_a));
-            if (height < (float)CAR_MARK_MIN_HEIGHT) { dbg_height++; continue; }
-
-            // ★★★ 交叉配对过滤: 真V形两臂都长, 假V形(同臂内外缘)一臂极短
-            // 放宽: 如果底边足够宽(>15px), 即使臂短也可能是薄臂的真V形
-            if (arm1 < 4.0f || arm2 < 4.0f) {
-                if (base_w < 15.0f) { dbg_arm++; continue; }
-            }
-
-
-            // ★★★ 边界保护: 拒绝顶点或底边中点太靠近图像边框的解
-            #define HOUGH_EDGE_MARGIN 8
-            if (ax < HOUGH_EDGE_MARGIN || ax >= ((float)CAMERA_W - HOUGH_EDGE_MARGIN) ||
-                ay < HOUGH_EDGE_MARGIN || ay >= ((float)CAMERA_H - HOUGH_EDGE_MARGIN) ||
-                mid_x < HOUGH_EDGE_MARGIN || mid_x >= ((float)CAMERA_W - HOUGH_EDGE_MARGIN) ||
-                mid_y < HOUGH_EDGE_MARGIN || mid_y >= ((float)CAMERA_H - HOUGH_EDGE_MARGIN))
-            {
-                #undef HOUGH_EDGE_MARGIN
-                dbg_edge++; continue;
-            }
-            #undef HOUGH_EDGE_MARGIN
-
-            dbg_pass++;  // 通过所有过滤
-
-            // ===== 评分: 选出最稳定的配对 =====
-            // 臂长越长 → 白点追踪越稳定, 帧间可信度越高
-            // 注意: 不惩罚不对称臂长, 透视畸变下真实V形也会不对称
-            float score = (arm1 + arm2) * 0.5f;
-
-            // 帧间角度稳定性加成: 优先选角度接近上一帧的配对
-            // 转动时霍夫线索引会变, 但 V 形角度连续变化
-            if (st_valid) {
-                float ang_diff = fabsf(angle_deg - st_angle);
-                if (ang_diff < 30.0f)
-                    score += (20.0f - ang_diff);  // 角度越接近, 加成越高
-            }
-
-            if (score > best_score)
-            {
-                best_score = score;
-                best_i = i; best_j = j;
-                b_ax = ax;     b_ay = ay;
-                b_bx = bx;     b_by = by;
-                b_cx = cx;     b_cy = cy;
-                b_arm1 = arm1; b_arm2 = arm2;
-                b_angle_deg = angle_deg;
-                b_height = height;
-                b_base_w = base_w;
-            }
-        }
-    }
-
-    // ★ 调试: 打印配对拒绝原因分布
-#if DEBUG_HOUGH
-    printf("HDBG,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
-           (unsigned long)g_vision_share.frame_id,
-           (unsigned int)dbg_total, (unsigned int)dbg_angle_diff,
-           (unsigned int)dbg_parallel, (unsigned int)dbg_oob,
-           (unsigned int)dbg_nbhd, (unsigned int)dbg_bbox,
-           (unsigned int)dbg_base_w, (unsigned int)dbg_angle,
-           (unsigned int)dbg_height, (unsigned int)dbg_arm,
-           (unsigned int)dbg_edge, (unsigned int)dbg_pass);
-#endif
-
-    // ===== 填充最优配对 =====
-    if (best_score > 0.0f)
-    {
-        st_angle = b_angle_deg;  // 更新帧间追踪
-        st_valid = 1;
-        uint16 uax = (uint16)(b_ax + 0.5f);
-        uint16 uay = (uint16)(b_ay + 0.5f);
-        uint16 ubx = (uint16)(b_bx + 0.5f);
-        uint16 uby = (uint16)(b_by + 0.5f);
-        uint16 ucx = (uint16)(b_cx + 0.5f);
-        uint16 ucy = (uint16)(b_cy + 0.5f);
-        uint16 umx = (uint16)((b_bx + b_cx) * 0.5f + 0.5f);
-        uint16 umy = (uint16)((b_by + b_cy) * 0.5f + 0.5f);
-
-        b->marker_vertex_x  = uax;
-        b->marker_vertex_y  = uay;
-        b->marker_base1_x   = ubx;
-        b->marker_base1_y   = uby;
-        b->marker_base2_x   = ucx;
-        b->marker_base2_y   = ucy;
-        b->marker_base_mid_x = umx;
-        b->marker_base_mid_y = umy;
-        b->marker_base_len   = (uint16)(b_base_w + 0.5f);
-        b->marker_height     = (uint16)(b_height + 0.5f);
-        b->marker_angle_deg  = (uint16)(b_angle_deg + 0.5f);
-        b->marker_arm1_len   = (uint16)(b_arm1 + 0.5f);
-        b->marker_arm2_len   = (uint16)(b_arm2 + 0.5f);
-        // 验证朝向：V形底边（宽端）像素多，质心更靠近底边
-        {
-            float dvx = (float)uax - (float)b->cx;
-            float dvy = (float)uay - (float)b->cy;
-            float dbx = (float)umx - (float)b->cx;
-            float dby = (float)umy - (float)b->cy;
-            if ((dbx*dbx + dby*dby) > (dvx*dvx + dvy*dvy))
-            {
-                b->marker_heading = atan2f((float)((int32)umy - (int32)uay),
-                                           (float)((int32)umx - (int32)uax));
-            }
-            else
-            {
-                b->marker_heading = atan2f((float)((int32)uay - (int32)umy),
-                                           (float)((int32)uax - (int32)umx));
-            }
-        }
-
-        if (b->raw_marker_score < 50)
-            b->raw_marker_score = 50;
-
-        return 1;
-    }
-
-    // 未检出: 重置帧间追踪
-    st_valid = 0;
-    return 0;
-}
-
-// 霍夫验证 BFS 结果: 用霍夫直线验证 BFS 找到的 V 形是否为真, 并精修端点
-// 返回: 2=双臂验证通过, 1=单臂验证, 0=未验证(可能是圆形信标)
-static uint8 hough_verify_bfs(HoughLine *lines, uint8 n, Blob *b)
-{
-    float ax = (float)b->marker_vertex_x;
-    float ay = (float)b->marker_vertex_y;
-    float bx = (float)b->marker_base1_x;
-    float by = (float)b->marker_base1_y;
-    float cx = (float)b->marker_base2_x;
-    float cy = (float)b->marker_base2_y;
-
-    float v1x = bx - ax, v1y = by - ay;
-    float v2x = cx - ax, v2y = cy - ay;
-    float a1 = sqrtf(v1x*v1x + v1y*v1y);
-    float a2 = sqrtf(v2x*v2x + v2y*v2y);
-    if (a1 < 2.0f || a2 < 2.0f) return 0;
-    v1x /= a1; v1y /= a1;
-    v2x /= a2; v2y /= a2;
-
-    int8 best_i1 = -1, best_i2 = -1;
-    float best_dot1 = 0.5f;  // cos(60°) — 方向偏差不超过60°
-    float best_dot2 = 0.5f;
-
-    for (uint8 i = 0; i < n; i++) {
-        float theta = (float)lines[i].theta_deg * 0.0174533f;
-        float lx = -sinf(theta), ly = cosf(theta);
-        float dot1 = fabsf(lx * v1x + ly * v1y);
-        float dot2 = fabsf(lx * v2x + ly * v2y);
-        if (dot1 > best_dot1) { best_dot1 = dot1; best_i1 = (int8)i; }
-        if (dot2 > best_dot2) { best_dot2 = dot2; best_i2 = (int8)i; }
-    }
-
-    if (best_i1 < 0 && best_i2 < 0) return 0;
-
-    // 沿霍夫直线追踪, 精修端点
-    if (best_i1 >= 0) {
-        float theta = (float)lines[best_i1].theta_deg * 0.0174533f;
-        float dx = -sinf(theta), dy = cosf(theta);
-        float fwd_x = ax, fwd_y = ay, bwd_x = ax, bwd_y = ay;
-        int cnt_fwd = 0, cnt_bwd = 0, gap_fwd = 0, gap_bwd = 0;
-        for (float t = 0; t < 200; t += 1.0f) {
-            float x = ax + dx * t, y = ay + dy * t;
-            int ix = (int)x, iy = (int)y;
-            if (ix < 0 || ix >= CAMERA_W || iy < 0 || iy >= CAMERA_H) break;
-            if (image_buffer[iy][ix] == 255) { fwd_x = x; fwd_y = y; cnt_fwd++; gap_fwd = 0; }
-            else { gap_fwd++; if (gap_fwd >= 5) break; }
-        }
-        for (float t = 0; t < 200; t += 1.0f) {
-            float x = ax - dx * t, y = ay - dy * t;
-            int ix = (int)x, iy = (int)y;
-            if (ix < 0 || ix >= CAMERA_W || iy < 0 || iy >= CAMERA_H) break;
-            if (image_buffer[iy][ix] == 255) { bwd_x = x; bwd_y = y; cnt_bwd++; gap_bwd = 0; }
-            else { gap_bwd++; if (gap_bwd >= 5) break; }
-        }
-        if (cnt_fwd >= cnt_bwd && cnt_fwd > 0) { bx = fwd_x; by = fwd_y; }
-        else if (cnt_bwd > 0) { bx = bwd_x; by = bwd_y; }
-    }
-
-    if (best_i2 >= 0) {
-        float theta = (float)lines[best_i2].theta_deg * 0.0174533f;
-        float dx = -sinf(theta), dy = cosf(theta);
-        float fwd_x = ax, fwd_y = ay, bwd_x = ax, bwd_y = ay;
-        int cnt_fwd = 0, cnt_bwd = 0, gap_fwd = 0, gap_bwd = 0;
-        for (float t = 0; t < 200; t += 1.0f) {
-            float x = ax + dx * t, y = ay + dy * t;
-            int ix = (int)x, iy = (int)y;
-            if (ix < 0 || ix >= CAMERA_W || iy < 0 || iy >= CAMERA_H) break;
-            if (image_buffer[iy][ix] == 255) { fwd_x = x; fwd_y = y; cnt_fwd++; gap_fwd = 0; }
-            else { gap_fwd++; if (gap_fwd >= 5) break; }
-        }
-        for (float t = 0; t < 200; t += 1.0f) {
-            float x = ax - dx * t, y = ay - dy * t;
-            int ix = (int)x, iy = (int)y;
-            if (ix < 0 || ix >= CAMERA_W || iy < 0 || iy >= CAMERA_H) break;
-            if (image_buffer[iy][ix] == 255) { bwd_x = x; bwd_y = y; cnt_bwd++; gap_bwd = 0; }
-            else { gap_bwd++; if (gap_bwd >= 5) break; }
-        }
-        if (cnt_fwd >= cnt_bwd && cnt_fwd > 0) { cx = fwd_x; cy = fwd_y; }
-        else if (cnt_bwd > 0) { cx = bwd_x; cy = bwd_y; }
-    }
-
-    // 更新坐标
-    b->marker_base1_x = (uint16)(bx + 0.5f);
-    b->marker_base1_y = (uint16)(by + 0.5f);
-    b->marker_base2_x = (uint16)(cx + 0.5f);
-    b->marker_base2_y = (uint16)(cy + 0.5f);
-    b->marker_base_mid_x = (uint16)((bx + cx) * 0.5f + 0.5f);
-    b->marker_base_mid_y = (uint16)((by + cy) * 0.5f + 0.5f);
-
-    return (best_i1 >= 0 && best_i2 >= 0) ? 2 : 1;
-}
-
 // 计算两点距离平方
 static uint32 point_dist2(Point a, Point b)
 {
@@ -743,223 +215,161 @@ static uint32 point_dist2(Point a, Point b)
     return (uint32)(dx * dx + dy * dy);
 }
 
-// V形车标特征提取：从 blob 像素中找 3 个关键点 (角点A, 底边端点B,C)
+// 点在三角形内检测 (重心坐标法)
+// 返回 1=在三角形内部或边上, 0=外部
+static uint8 point_in_triangle(int32 px, int32 py,
+                                int32 ax, int32 ay,
+                                int32 bx, int32 by,
+                                int32 cx, int32 cy)
+{
+    // 以三角形边为法线, 用叉积符号判断
+    int32 d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+    int32 d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx);
+    int32 d3 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx);
+
+    uint8 has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+    uint8 has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+    return !(has_neg && has_pos);  // 全同号 → 内部
+}
+
+// ★★★ 凸包算法: Andrew 单调链, 返回凸包面积
+// 输入 pts[0..count-1], 输出 convex_area, 需要至少 3 个点
+static uint32 convex_hull_area(Point *pts, uint32 count)
+{
+    if (count < 3) return 0;
+    // 简单排序: 按 x 升序, x 相同按 y 升序 (插入排序, count 很小)
+    for (uint32 i = 1; i < count; i++) {
+        Point key = pts[i];
+        int32 j = (int32)i - 1;
+        while (j >= 0 && (pts[j].x > key.x || (pts[j].x == key.x && pts[j].y > key.y))) {
+            pts[j+1] = pts[j];
+            j--;
+        }
+        pts[j+1] = key;
+    }
+    // 去重 (相邻重复点只保留一个)
+    uint32 n = 0;
+    for (uint32 i = 0; i < count; i++) {
+        if (i == 0 || pts[i].x != pts[i-1].x || pts[i].y != pts[i-1].y) {
+            pts[n++] = pts[i];
+        }
+    }
+    if (n < 3) return 0;
+    // Andrew monotone chain, 用 static 暂存 hull 点 (最大 256, 实际 < 100)
+    static Point hull[256];
+    uint32 h = 0;
+    // 下凸壳
+    for (uint32 i = 0; i < n; i++) {
+        while (h >= 2) {
+            int32 cx = (int32)hull[h-1].x - (int32)hull[h-2].x;
+            int32 cy = (int32)hull[h-1].y - (int32)hull[h-2].y;
+            int32 nx = (int32)pts[i].x - (int32)hull[h-2].x;
+            int32 ny = (int32)pts[i].y - (int32)hull[h-2].y;
+            if (cx*ny - cy*nx <= 0) h--; else break;
+        }
+        hull[h++] = pts[i];
+    }
+    // 上凸壳
+    uint32 lower = h;
+    for (uint32 i = n-1; i > 0; i--) {
+        while (h > lower) {
+            int32 cx = (int32)hull[h-1].x - (int32)hull[h-2].x;
+            int32 cy = (int32)hull[h-1].y - (int32)hull[h-2].y;
+            int32 nx = (int32)pts[i].x - (int32)hull[h-2].x;
+            int32 ny = (int32)pts[i].y - (int32)hull[h-2].y;
+            if (cx*ny - cy*nx <= 0) h--; else break;
+        }
+        hull[h++] = pts[i];
+    }
+    // shoelace 公式求凸包面积
+    uint32 area_x2 = 0;
+    for (uint32 i = 0, j = 1; i < h; i++, j = (j+1 < h) ? j+1 : 0) {
+        area_x2 += (uint32)((int32)hull[i].x * (int32)hull[j].y);
+        area_x2 -= (uint32)((int32)hull[i].y * (int32)hull[j].x);
+    }
+    return area_x2 / 2;
+}
+
+// 在 image_buffer 上用 Bresenham 画圆
+static void draw_circle(int cx, int cy, int r, uint8 color)
+{
+    int x = r, y = 0;
+    int err = 1 - r;
+    while (x >= y)
+    {
+        int pts[][2] = {{cx+x,cy+y},{cx-x,cy+y},{cx+x,cy-y},{cx-x,cy-y},
+                        {cx+y,cy+x},{cx-y,cy+x},{cx+y,cy-x},{cx-y,cy-x}};
+        for (int i = 0; i < 8; i++)
+        {
+            int px = pts[i][0], py = pts[i][1];
+            if (px >= 0 && px < CAMERA_W && py >= 0 && py < CAMERA_H)
+                image_buffer[py][px] = color;
+        }
+        y++;
+        if (err <= 0) err += 2*y + 1;
+        else { x--; err += 2*(y-x) + 1; }
+    }
+}
+
+// 在 image_buffer 上画一条线 (Bresenham)
+static void draw_line(int x0, int y0, int x1, int y1, uint8 color)
+{
+    int dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
+    int dy = (y1 > y0) ? (y1 - y0) : (y0 - y1);
+    int sx = (x0 < x1) ? 1 : -1;
+    int sy = (y0 < y1) ? 1 : -1;
+    int err = dx - dy;
+    while (1)
+    {
+        if (x0 >= 0 && x0 < CAMERA_W && y0 >= 0 && y0 < CAMERA_H)
+            image_buffer[y0][x0] = color;
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x0 += sx; }
+        if (e2 <  dx) { err += dx; y0 += sy; }
+    }
+}
+
+// 沿 Bresenham 线采样 image_buffer, 返回 blob 像素占比 (0~100)
+// blob 判断: image_buffer[y][x] > IR_THRESHOLD (140)
+static uint8 line_blob_pct(Point a, Point b)
+{
+    int x = (int)a.x, y = (int)a.y;
+    int x1 = (int)b.x, y1 = (int)b.y;
+    int dx = (x1 > x) ? (x1 - x) : (x - x1);
+    int dy = (y1 > y) ? (y1 - y) : (y - y1);
+    int sx = (x < x1) ? 1 : -1;
+    int sy = (y < y1) ? 1 : -1;
+    int err = dx - dy;
+    uint32 total = 0, filled = 0;
+
+    while (1)
+    {
+        total++;
+        if (x >= 0 && x < CAMERA_W && y >= 0 && y < CAMERA_H)
+        {
+            if (image_buffer[y][x] > (uint8)IR_THRESHOLD) filled++;
+        }
+        if (x == x1 && y == y1) break;
+        int e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 <  dx) { err += dx; y += sy; }
+    }
+    if (total == 0) return 0;
+    return (uint8)((filled * 100) / total);
+}
+
+// V形车标记特征提取：从 blob 像素中找 3 个关键点 (角点A, 底边端点B,C)
 static void compute_car_marker_feature(Blob *b, Point *pts, uint32 count)
 {
     // 面积预过滤
     if(b->area < CAR_MARK_MIN_AREA || b->area > CAR_MARK_MAX_AREA) return;
 
-    // 圆形度预过滤：近似圆形的 blob 不可能是 V 形（节省计算）
-    if(b->oheight > 0)
-    {
-        uint16 ow = b->owidth;
-        uint16 oh = b->oheight;
-        uint16 ratio = (ow > oh) ? (ow * 100 / oh) : (oh * 100 / ow);
-        if(ratio < 120) return;   // ~1:1.20 以内太圆，跳过 (原 135 收紧, 保留更多碎片候选)
-    }
+    b->marker_angle_deg = 0;   // 清除上帧角度, 防止复用旧值
 
-    b->marker_hough_v = 0;
-    b->marker_angle_deg = 0;   // 防止复用旧值导致 angle=0 但 marker_hough_v=1 的 bug
-
-    // DEBUG_HOUGH: 提升到函数作用域, 供末尾打印使用
-    HoughLine hough_lines[HOUGH_MAX_LINES];
-    uint8 hough_cnt = 0;
-    uint8 hough_skip = 0;
-    uint8 hough_num_angles = 0;
-
-    // ===== 第一步：霍夫变换 (直线检测, 供 BFS 后验证用) =====
-    // 在 blob ROI 内检测直线, 后续用于验证 BFS 结果并精修端点
-    {
-        #define CAR_MARK_EDGE_MARGIN  10
-        hough_skip = 0;
-        if (b->cx < CAR_MARK_EDGE_MARGIN ||
-            b->cx > (CAMERA_W - CAR_MARK_EDGE_MARGIN) ||
-            b->cy < CAR_MARK_EDGE_MARGIN ||
-            b->cy > (CAMERA_H - CAR_MARK_EDGE_MARGIN))
-        {
-            hough_skip = 1;  // 太靠边, 跳过霍夫, 走 BFS 兜底
-        }
-        #undef CAR_MARK_EDGE_MARGIN
-
-        if (!hough_skip)
-        {
-            uint16 roi_half_w = (b->width / 2) + HOUGH_ROI_MARGIN;
-            uint16 roi_half_h = (b->height / 2) + HOUGH_ROI_MARGIN;
-
-            int8 hough_angles[62];
-            uint8 idx = 0;
-            for(int8 t = -(int8)HOUGH_ANGLE_MAX; t <= -(int8)HOUGH_ANGLE_MIN; t += (int8)HOUGH_ANGLE_STEP)
-                hough_angles[idx++] = t;
-            for(int8 t = (int8)HOUGH_ANGLE_MIN; t <= (int8)HOUGH_ANGLE_MAX; t += (int8)HOUGH_ANGLE_STEP)
-                hough_angles[idx++] = t;
-
-            hough_num_angles = idx;
-
-            hough_cnt = hough_transform_roi(
-                b->cx, b->cy,
-                roi_half_w, roi_half_h,
-                hough_angles, idx,
-                HOUGH_VOTE_THRESH,
-                hough_lines, HOUGH_MAX_LINES);
-
-#if DEBUG_SCORES
-            printf("HOUGH: area=%d cx=%d cy=%d w=%d h=%d\n",
-                   b->area, b->cx, b->cy, b->width, b->height);
-            printf("HOUGH: lines=%d thresh=%d angles=%d\n",
-                   hough_cnt, HOUGH_VOTE_THRESH, idx);
-#endif
-
-            // 霍夫直线保留供 BFS 后验证用, 不再作为独立检测器
-        }
-    }
-
-    // ===== 第二步：BFS 拓扑法 (主检测) =====
-    {
-    // 第一步：找 8 个极值候选点
-    Point candidates[8];
-    uint32 best_metric[8];
-    Point base1 = pts[0];
-    Point base2 = pts[0];
-    Point vertex = pts[0];
-    uint32 best_base_d2 = 0;
-    float best_height = 0.0f;
-
-    for(uint8 i = 0; i < 8; i++)
-    {
-        candidates[i] = pts[0];
-        best_metric[i] = (i & 1) ? 0 : 0xFFFFFFFF;
-    }
-
-    for(uint32 p = 0; p < count; p++)
-    {
-        uint32 x = pts[p].x;
-        uint32 y = pts[p].y;
-        uint32 metrics[8];
-        metrics[0] = x;
-        metrics[1] = x;
-        metrics[2] = y;
-        metrics[3] = y;
-        metrics[4] = x + y;
-        metrics[5] = x + y;
-        metrics[6] = x + (uint32)(CAMERA_H - y);
-        metrics[7] = x + (uint32)(CAMERA_H - y);
-
-        for(uint8 i = 0; i < 8; i += 2)
-        {
-            if(metrics[i] < best_metric[i])
-            {
-                best_metric[i] = metrics[i];
-                candidates[i] = pts[p];
-            }
-            if(metrics[i + 1] > best_metric[i + 1])
-            {
-                best_metric[i + 1] = metrics[i + 1];
-                candidates[i + 1] = pts[p];
-            }
-        }
-    }
-
-    // 第二步：从候选点中找最远的一对 → B, C（底边两端）
-    for(uint8 i = 0; i < 8; i++)
-    {
-        for(uint8 j = i + 1; j < 8; j++)
-        {
-            uint32 d2 = point_dist2(candidates[i], candidates[j]);
-            if(d2 > best_base_d2)
-            {
-                best_base_d2 = d2;
-                base1 = candidates[i];
-                base2 = candidates[j];
-            }
-        }
-    }
-
-    // 第三步：全像素扫描，找离 BC 直线垂直距离最远的点 → A（角点）
-    float bx = (float)((int32)base2.x - (int32)base1.x);
-    float by = (float)((int32)base2.y - (int32)base1.y);
-    float base_len = sqrtf(bx * bx + by * by);
-
-    if(base_len > 0.5f)
-    {
-        for(uint32 p = 0; p < count; p++)
-        {
-            float px = (float)((int32)pts[p].x - (int32)base1.x);
-            float py = (float)((int32)pts[p].y - (int32)base1.y);
-            float height = fabsf(px * by - py * bx) / base_len;
-            if(height > best_height)
-            {
-                best_height = height;
-                vertex = pts[p];
-            }
-        }
-    }
-
-    // 第四步：验证 V 形几何
-    float v1x = (float)((int32)base1.x - (int32)vertex.x);
-    float v1y = (float)((int32)base1.y - (int32)vertex.y);
-    float v2x = (float)((int32)base2.x - (int32)vertex.x);
-    float v2y = (float)((int32)base2.y - (int32)vertex.y);
-    float arm1 = sqrtf(v1x * v1x + v1y * v1y);
-    float arm2 = sqrtf(v2x * v2x + v2y * v2y);
-
-    // 余弦定理求夹角
-    float dot = v1x * v2x + v1y * v2y;
-    float cos_a = 1.0f;
-    if(arm1 > 0.5f && arm2 > 0.5f)
-    {
-        cos_a = dot / (arm1 * arm2);
-        if(cos_a > 1.0f) cos_a = 1.0f;
-        if(cos_a < -1.0f) cos_a = -1.0f;
-    }
-    float angle_deg_f = acosf(cos_a) * 57.2957795f;
-
-    // 验证通过条件
-    uint8 bfs_ok = 1;
-    if(base_len < (float)CAR_MARK_MIN_BASE_LEN) bfs_ok = 0;
-    //  else if(arm1 < (float)CAR_MARK_MIN_ARM_LEN || arm2 < (float)CAR_MARK_MIN_ARM_LEN) bfs_ok = 0;  // 臂长检查 (暂时注释)
-    else if(best_height < (float)CAR_MARK_MIN_HEIGHT) bfs_ok = 0;
-    else if(angle_deg_f < (float)CAR_MARK_MIN_ANGLE_DEG || angle_deg_f > (float)CAR_MARK_MAX_ANGLE_DEG) bfs_ok = 0;
-
-    if(bfs_ok)
-    {
-        // BFS 几何法验证通过, 存储特征
-        uint16 base_mid_x = (base1.x + base2.x) / 2;
-        uint16 base_mid_y = (base1.y + base2.y) / 2;
-
-        b->marker_base1_x = base1.x;
-        b->marker_base1_y = base1.y;
-        b->marker_base2_x = base2.x;
-        b->marker_base2_y = base2.y;
-        b->marker_vertex_x = vertex.x;
-        b->marker_vertex_y = vertex.y;
-        b->marker_base_mid_x = base_mid_x;
-        b->marker_base_mid_y = base_mid_y;
-        b->marker_base_len = (uint16)(base_len + 0.5f);
-        b->marker_height = (uint16)(best_height + 0.5f);
-        b->marker_angle_deg = (uint16)(angle_deg_f + 0.5f);
-        b->marker_arm1_len = (uint16)(arm1 + 0.5f);
-        b->marker_arm2_len = (uint16)(arm2 + 0.5f);
-        b->marker_heading = atan2f((float)((int32)vertex.y - (int32)base_mid_y),
-                                   (float)((int32)vertex.x - (int32)base_mid_x));
-    }
-    }  // BFS 拓扑法结束
-
-    // ===== 霍夫验证: 用霍夫直线验证 BFS 结果 =====
-    // 如果霍夫直线与 BFS 两臂方向匹配, 精修端点
-    // 如果不匹配, 可能是圆形信标 (降低置信度)
-    if (b->marker_angle_deg > 0 && hough_cnt >= 2)
-    {
-        uint8 verified = hough_verify_bfs(hough_lines, hough_cnt, b);
-        if (verified >= 2) {
-            b->marker_hough_v = 1;  // 双臂都验证通过
-        }
-        // verified=1: 单臂验证, 不标记 hough_v 但端点已精修
-        // verified=0: 未验证, 可能是圆形信标, 保持 BFS 结果
-    }
-
-    // ===== 第三步：轮廓暴力搜索 V 形 (兜底) =====
-    // BFS 失败时, 直接枚举轮廓点采样对, 暴力搜索最佳三角形
-    if (b->marker_angle_deg == 0)
+    // ===== 暴力搜索 V 形三点 =====
+    // 枚举轮廓点采样对作为底边候选, 找最佳三角形
     {
         // 采样步长与轮廓点数成比例, 保证计算量可控
         uint8 step_s = (count > 80) ? 4u : (count > 40) ? 3u : 2u;
@@ -983,6 +393,14 @@ static void compute_car_marker_feature(Blob *b, Point *pts, uint32 count)
                 float by_f = (float)dy;
                 float base_len_f = sqrtf(bx_f * bx_f + by_f * by_f);
                 if (base_len_f < 0.5f) continue;
+
+                // ===== 连线检验 → 快速滤除底边候选 =====
+                // 底点间连线应跨越 V 形开口 (低 blob 占比)
+                // 如果穿过 blob → 不是真正的底边, 跳过整个 (i,j)
+                {
+                    uint8 pct_base = line_blob_pct(pts[i], pts[j]);
+                    if (pct_base > 45) continue;
+                }
 
                 // 找离线段 BC 最远的轮廓点作为顶点 A
                 float best_h = 0;
@@ -1032,134 +450,165 @@ static void compute_car_marker_feature(Blob *b, Point *pts, uint32 count)
             }
         }
 
-        // 如果暴力搜索成功, 存储 V 形特征
+        // 如果暴力搜索成功, 对最佳候选做连线检验
         if (best_score > 0)
         {
             Point bv = pts[best_vertex_idx];
             Point bb1 = pts[best_base1_idx];
             Point bb2 = pts[best_base2_idx];
 
-            uint16 base_mid_x = (bb1.x + bb2.x) / 2;
-            uint16 base_mid_y = (bb1.y + bb2.y) / 2;
-            float bbase_len = sqrtf((float)((int32)bb2.x-(int32)bb1.x)*((int32)bb2.x-(int32)bb1.x) +
-                                    (float)((int32)bb2.y-(int32)bb1.y)*((int32)bb2.y-(int32)bb1.y));
-            float v1x_f = (float)((int32)bb1.x-(int32)bv.x);
-            float v1y_f = (float)((int32)bb1.y-(int32)bv.y);
-            float v2x_f = (float)((int32)bb2.x-(int32)bv.x);
-            float v2y_f = (float)((int32)bb2.y-(int32)bv.y);
-            float arm1_f = sqrtf(v1x_f*v1x_f+v1y_f*v1y_f);
-            float arm2_f = sqrtf(v2x_f*v2x_f+v2y_f*v2y_f);
-            float dot_f = v1x_f*v2x_f + v1y_f*v2y_f;
-            float cos_a_f = 1.0f;
-            if(arm1_f>0.5f && arm2_f>0.5f) { cos_a_f = dot_f/(arm1_f*arm2_f);
-                if(cos_a_f>1)cos_a_f=1;if(cos_a_f<-1)cos_a_f=-1; }
-            float angle_deg_f = acosf(cos_a_f)*57.2957795f;
-            float height_f = (float)best_h_times10 / 10.0f;
+            // 顶点→底点连线应在 V 形内部 (高 blob 占比)
+            uint8 pct_v1 = line_blob_pct(bv, bb1);
+            uint8 pct_v2 = line_blob_pct(bv, bb2);
 
-            b->marker_base1_x = bb1.x; b->marker_base1_y = bb1.y;
-            b->marker_base2_x = bb2.x; b->marker_base2_y = bb2.y;
-            b->marker_vertex_x = bv.x; b->marker_vertex_y = bv.y;
-            b->marker_base_mid_x = base_mid_x; b->marker_base_mid_y = base_mid_y;
-            b->marker_base_len = (uint16)(bbase_len+0.5f);
-            b->marker_height = (uint16)(height_f+0.5f);
-            b->marker_angle_deg = (uint16)(angle_deg_f+0.5f);
-            b->marker_arm1_len = (uint16)(arm1_f+0.5f);
-            b->marker_arm2_len = (uint16)(arm2_f+0.5f);
-            b->marker_heading = atan2f((float)((int32)bv.y-(int32)base_mid_y),
-                                       (float)((int32)bv.x-(int32)base_mid_x));
-        }
-    }
-
-// ===== 帧间平滑: 所有检测结果统一做 EMA 低通滤波 =====
-    // 霍夫/BFS/暴力搜索统一做 EMA 低通滤波, 减少帧间跳变
-    // 含位移钳位: 单坐标每帧变化不超过 MAX_DELTA px, 抑制大幅抖动
-    if (b->marker_angle_deg > 0)
-    {
-        #define BFS_EMA_ALPHA  0.60f  // 60% 新值, 40% 旧值 (快速收敛)
-        #define BFS_MAX_DELTA  10.0f  // 单坐标每帧最大变化 (px)
-        static float prev_vx = 0, prev_vy = 0;
-        static float prev_b1x = 0, prev_b1y = 0;
-        static float prev_b2x = 0, prev_b2y = 0;
-        static float prev_mx = 0, prev_my = 0;
-        static uint8 prev_init = 0;
-
-        if (!prev_init) {
-            prev_vx = b->marker_vertex_x; prev_vy = b->marker_vertex_y;
-            prev_b1x = b->marker_base1_x; prev_b1y = b->marker_base1_y;
-            prev_b2x = b->marker_base2_x; prev_b2y = b->marker_base2_y;
-            prev_mx = b->marker_base_mid_x; prev_my = b->marker_base_mid_y;
-            prev_init = 1;
-        } else {
-            float cvx = (float)b->marker_vertex_x, cvy = (float)b->marker_vertex_y;
-            float cb1x = (float)b->marker_base1_x, cb1y = (float)b->marker_base1_y;
-            float cb2x = (float)b->marker_base2_x, cb2y = (float)b->marker_base2_y;
-            float cmx = (float)b->marker_base_mid_x, cmy = (float)b->marker_base_mid_y;
-
-            // 位移钳位: 限制每帧最大变化, 防止大跳变
-            cvx = prev_vx + CLAMP(cvx - prev_vx, -BFS_MAX_DELTA, BFS_MAX_DELTA);
-            cvy = prev_vy + CLAMP(cvy - prev_vy, -BFS_MAX_DELTA, BFS_MAX_DELTA);
-            cb1x = prev_b1x + CLAMP(cb1x - prev_b1x, -BFS_MAX_DELTA, BFS_MAX_DELTA);
-            cb1y = prev_b1y + CLAMP(cb1y - prev_b1y, -BFS_MAX_DELTA, BFS_MAX_DELTA);
-            cb2x = prev_b2x + CLAMP(cb2x - prev_b2x, -BFS_MAX_DELTA, BFS_MAX_DELTA);
-            cb2y = prev_b2y + CLAMP(cb2y - prev_b2y, -BFS_MAX_DELTA, BFS_MAX_DELTA);
-
-            // B/C 身份追踪: 检测 B 和 C 是否互换位置
-            // 比较"同侧距离"和"交叉距离", 如果交叉距离更小说明互换了
+            if (pct_v1 >= 35 && pct_v2 >= 35)
             {
-                float d_same = (cb1x-prev_b1x)*(cb1x-prev_b1x) +
-                               (cb1y-prev_b1y)*(cb1y-prev_b1y) +
-                               (cb2x-prev_b2x)*(cb2x-prev_b2x) +
-                               (cb2y-prev_b2y)*(cb2y-prev_b2y);
-                float d_cross = (cb1x-prev_b2x)*(cb1x-prev_b2x) +
-                                (cb1y-prev_b2y)*(cb1y-prev_b2y) +
-                                (cb2x-prev_b1x)*(cb2x-prev_b1x) +
-                                (cb2y-prev_b1y)*(cb2y-prev_b1y);
-                if (d_same > d_cross)
-                {
-                    // B 和 C 互换了, 交换回来
-                    float tmp = cb1x; cb1x = cb2x; cb2x = tmp;
-                    tmp = cb1y; cb1y = cb2y; cb2y = tmp;
-                    // 中点不变 (avg 的交换不变性), 但重新计算更安全
-                    cmx = (cb1x + cb2x) * 0.5f;
-                    cmy = (cb1y + cb2y) * 0.5f;
-                }
+                uint16 base_mid_x = ((uint16)bv.x + bb1.x + bb2.x) / 3;
+                uint16 base_mid_y = ((uint16)bv.y + bb1.y + bb2.y) / 3;
+                float bbase_len = sqrtf((float)((int32)bb2.x-(int32)bb1.x)*((int32)bb2.x-(int32)bb1.x) +
+                                        (float)((int32)bb2.y-(int32)bb1.y)*((int32)bb2.y-(int32)bb1.y));
+                float v1x_f = (float)((int32)bb1.x-(int32)bv.x);
+                float v1y_f = (float)((int32)bb1.y-(int32)bv.y);
+                float v2x_f = (float)((int32)bb2.x-(int32)bv.x);
+                float v2y_f = (float)((int32)bb2.y-(int32)bv.y);
+                float arm1_f = sqrtf(v1x_f*v1x_f+v1y_f*v1y_f);
+                float arm2_f = sqrtf(v2x_f*v2x_f+v2y_f*v2y_f);
+                float dot_f = v1x_f*v2x_f + v1y_f*v2y_f;
+                float cos_a_f = 1.0f;
+                if(arm1_f>0.5f && arm2_f>0.5f) { cos_a_f = dot_f/(arm1_f*arm2_f);
+                    if(cos_a_f>1)cos_a_f=1;if(cos_a_f<-1)cos_a_f=-1; }
+                float angle_deg_f = acosf(cos_a_f)*57.2957795f;
+                float height_f = (float)best_h_times10 / 10.0f;
+
+                b->marker_base1_x = bb1.x; b->marker_base1_y = bb1.y;
+                b->marker_base2_x = bb2.x; b->marker_base2_y = bb2.y;
+                b->marker_vertex_x = bv.x; b->marker_vertex_y = bv.y;
+                b->marker_base_mid_x = base_mid_x; b->marker_base_mid_y = base_mid_y;
+                b->marker_base_len = (uint16)(bbase_len+0.5f);
+                b->marker_height = (uint16)(height_f+0.5f);
+                b->marker_angle_deg = (uint16)(angle_deg_f+0.5f);
+                b->marker_arm1_len = (uint16)(arm1_f+0.5f);
+                b->marker_arm2_len = (uint16)(arm2_f+0.5f);
+                b->marker_heading = atan2f((float)((int32)bv.y-(int32)base_mid_y),
+                                           (float)((int32)bv.x-(int32)base_mid_x));
             }
-            cmx = prev_mx + CLAMP(cmx - prev_mx, -BFS_MAX_DELTA, BFS_MAX_DELTA);
-            cmy = prev_my + CLAMP(cmy - prev_my, -BFS_MAX_DELTA, BFS_MAX_DELTA);
-
-            prev_vx = prev_vx * (1.0f - BFS_EMA_ALPHA) + cvx * BFS_EMA_ALPHA;
-            prev_vy = prev_vy * (1.0f - BFS_EMA_ALPHA) + cvy * BFS_EMA_ALPHA;
-            prev_b1x = prev_b1x * (1.0f - BFS_EMA_ALPHA) + cb1x * BFS_EMA_ALPHA;
-            prev_b1y = prev_b1y * (1.0f - BFS_EMA_ALPHA) + cb1y * BFS_EMA_ALPHA;
-            prev_b2x = prev_b2x * (1.0f - BFS_EMA_ALPHA) + cb2x * BFS_EMA_ALPHA;
-            prev_b2y = prev_b2y * (1.0f - BFS_EMA_ALPHA) + cb2y * BFS_EMA_ALPHA;
-            prev_mx = prev_mx * (1.0f - BFS_EMA_ALPHA) + cmx * BFS_EMA_ALPHA;
-            prev_my = prev_my * (1.0f - BFS_EMA_ALPHA) + cmy * BFS_EMA_ALPHA;
-
-            b->marker_vertex_x = (uint16)(prev_vx + 0.5f);
-            b->marker_vertex_y = (uint16)(prev_vy + 0.5f);
-            b->marker_base1_x = (uint16)(prev_b1x + 0.5f);
-            b->marker_base1_y = (uint16)(prev_b1y + 0.5f);
-            b->marker_base2_x = (uint16)(prev_b2x + 0.5f);
-            b->marker_base2_y = (uint16)(prev_b2y + 0.5f);
-            b->marker_base_mid_x = (uint16)(prev_mx + 0.5f);
-            b->marker_base_mid_y = (uint16)(prev_my + 0.5f);
         }
     }
-    // 清除宏定义, 避免跨函数污染
-    #undef BFS_EMA_ALPHA
-    #undef BFS_MAX_DELTA
 
-#if DEBUG_HOUGH
-    // 存储霍夫数据, 延迟到分类完成后打印 (避免信标被误记为 V 形检出)
-    b->dbg_hough_cnt = hough_cnt;
-    b->dbg_hough_num_angles = hough_num_angles;
-    for (uint8 li = 0; li < hough_cnt && li < HOUGH_MAX_LINES; li++) {
-        b->dbg_hough_rho[li]   = hough_lines[li].rho;
-        b->dbg_hough_theta[li] = hough_lines[li].theta_deg;
-        b->dbg_hough_votes[li] = hough_lines[li].votes;
+    // 保存原始 (未平滑的) 坐标, 供 camera_process 在分类后统一做 EMA 平滑
+    // EMA 放在 camera_process 中, 只对最终确定的 BLOB_CAR_MARKER 做平滑
+    // 避免过早在 blob 循环中用 static 变量污染不同 blob 的坐标
+
+    // ★★★ 凸包面积比: 凹形(<85) → V形, 凸形(>90) → 圆形/信标
+    {
+        uint32 hull_area = convex_hull_area(pts, count);
+        uint32 cr = 100;
+        if (hull_area > b->area) {
+            cr = (uint32)b->area * 100 / hull_area;
+            if (cr > 100) cr = 100;
+        }
+        b->marker_convex_ratio = (uint8)cr;
     }
-#endif
+
+    // ★★★ 轮廓距离标准差比: V形轮廓点到重心距离分散(>35), 圆形集中(<20)
+    {
+        float mean_d = 0.0f;
+        for (uint32 p = 0; p < count; p++) {
+            float dx = (float)((int32)pts[p].x - (int32)b->cx);
+            float dy = (float)((int32)pts[p].y - (int32)b->cy);
+            mean_d += sqrtf(dx*dx + dy*dy);
+        }
+        mean_d /= (float)count;
+        float var_d = 0.0f;
+        if (mean_d > 1.0f) {
+            for (uint32 p = 0; p < count; p++) {
+                float dx = (float)((int32)pts[p].x - (int32)b->cx);
+                float dy = (float)((int32)pts[p].y - (int32)b->cy);
+                float d = sqrtf(dx*dx + dy*dy);
+                float diff = d - mean_d;
+                var_d += diff * diff;
+            }
+            var_d /= (float)count;
+            float std_d = sqrtf(var_d);
+            uint8 sr = (uint8)(std_d / mean_d * 100.0f + 0.5f);
+            if (sr > 100) sr = 100;
+            b->marker_dist_std_ratio = sr;
+        } else {
+            b->marker_dist_std_ratio = 0;
+        }
+    }
+
+    // ★★★ 轮廓凸度统计: 每个轮廓点到凸包边的距离
+    {
+        // pts 已被 convex_hull_area 排序, 用 Andrew monotone chain 求凸包
+        uint32 n = count;
+        // 去重
+        uint32 nd = 0;
+        for (uint32 i = 0; i < n; i++) {
+            if (i == 0 || pts[i].x != pts[i-1].x || pts[i].y != pts[i-1].y)
+                pts[nd++] = pts[i];
+        }
+        n = nd;
+        static Point hull[256];
+        uint32 h = 0;
+        if (n >= 3) {
+            for (uint32 i = 0; i < n; i++) {
+                while (h >= 2) {
+                    int32 cx = (int32)hull[h-1].x - (int32)hull[h-2].x;
+                    int32 cy = (int32)hull[h-1].y - (int32)hull[h-2].y;
+                    int32 nx = (int32)pts[i].x - (int32)hull[h-2].x;
+                    int32 ny = (int32)pts[i].y - (int32)hull[h-2].y;
+                    if (cx*ny - cy*nx <= 0) h--; else break;
+                }
+                hull[h++] = pts[i];
+            }
+            uint32 lower = h;
+            for (uint32 i = n-1; i > 0; i--) {
+                while (h > lower) {
+                    int32 cx = (int32)hull[h-1].x - (int32)hull[h-2].x;
+                    int32 cy = (int32)hull[h-1].y - (int32)hull[h-2].y;
+                    int32 nx = (int32)pts[i].x - (int32)hull[h-2].x;
+                    int32 ny = (int32)pts[i].y - (int32)hull[h-2].y;
+                    if (cx*ny - cy*nx <= 0) h--; else break;
+                }
+                hull[h++] = pts[i];
+            }
+        }
+
+        // 对每个轮廓点, 找最近凸包边的距离
+        float sum_def = 0.0f;
+        float max_def = 0.0f;
+        uint32 gt2_cnt = 0;
+        for (uint32 p = 0; p < count; p++) {
+            float min_d = 999999.0f;
+            for (uint32 e = 0, j = 1; e < h-1; e++, j = (j+1 < h-1) ? j+1 : 0) {
+                float ax = (float)hull[e].x, ay = (float)hull[e].y;
+                float bx = (float)hull[j].x, by = (float)hull[j].y;
+                float px = (float)pts[p].x, py = (float)pts[p].y;
+                float ex = bx - ax, ey = by - ay;
+                float len2 = ex*ex + ey*ey;
+                if (len2 < 0.5f) continue;
+                float t = ((px-ax)*ex + (py-ay)*ey) / len2;
+                if (t < 0.0f) t = 0.0f;
+                if (t > 1.0f) t = 1.0f;
+                float near_x = ax + t * ex, near_y = ay + t * ey;
+                float dx = px - near_x, dy = py - near_y;
+                float d = sqrtf(dx*dx + dy*dy);
+                if (d < min_d) min_d = d;
+            }
+            sum_def += min_d;
+            if (min_d > max_def) max_def = min_d;
+            if (min_d > 2.0f) gt2_cnt++;
+        }
+
+        float mean_def = sum_def / (float)count;
+        // 归一化到 0-100: max_def<1px→0, 否则按比例
+        b->dbg_conv_mean_def = (uint8)((mean_def > 0.5f) ? (mean_def * 10.0f) : 0.0f);
+        if (b->dbg_conv_mean_def > 100) b->dbg_conv_mean_def = 100;
+        b->dbg_conv_max_def = (uint8)((max_def > 0.5f) ? (max_def * 10.0f) : 0.0f);
+        if (b->dbg_conv_max_def > 100) b->dbg_conv_max_def = 100;
+        b->dbg_conv_gt2_pct = (uint8)((uint32)gt2_cnt * 100 / count);
+    }
 }
 
 // V形车标调试绘制：在图像上画出角点、底边端点、底边中点
@@ -1330,21 +779,14 @@ static void compute_raw_scores(void)
 {
     for(uint8 i = 0; i < blob_num; i++)
     {
-        // 霍夫确认的 V 形 → 直接锁定为车标, 跳过软评分
-        if(blobs[i].marker_hough_v)
-        {
-            blobs[i].raw_marker_score = 100;
-            blobs[i].raw_beacon_score = 0;
-            continue;
-        }
+        // ★★★ 先把宽高比算出来, 供后续圆形判别用
+        int32 oratio = (blobs[i].oheight > 0)
+            ? (int32)blobs[i].owidth * 100 / (int32)blobs[i].oheight : 100;
+        int32 ord = (oratio > 100) ? (oratio - 100) : (100 - oratio);
 
         int32 ratio = (blobs[i].height > 0)
             ? (int32)blobs[i].width * 100 / (int32)blobs[i].height
             : 100;
-        int32 oratio = (blobs[i].oheight > 0)
-            ? (int32)blobs[i].owidth * 100 / (int32)blobs[i].oheight
-            : 100;
-        int32 ord = (oratio > 100) ? (oratio - 100) : (100 - oratio);
         int32 rd = (ratio > 100) ? (ratio - 100) : (100 - ratio);
 
         uint16 area = blobs[i].area;
@@ -1380,6 +822,23 @@ static void compute_raw_scores(void)
         if(brightness < 40)
         {
             bs = bs * (int32)brightness / 40;
+        }
+
+        // 凹形惩罚: 凸包比<90 的 blob 有 V 形特征, 不可能是纯信标
+        {
+            uint8 cr = blobs[i].marker_convex_ratio;
+            if (cr > 0 && cr < 90) {
+                bs = bs * (int32)cr / 90;
+            }
+        }
+
+        // ★★★ 距离标准差惩罚: V形轮廓点分散(>35), 不可能是纯信标
+        {
+            uint8 sr = blobs[i].marker_dist_std_ratio;
+            if (sr > 35 && sr <= 100) {
+                int32 factor = (100 - sr) * 100 / 65;   // 35→100, 100→0
+                bs = bs * factor / 100;
+            }
         }
 
         blobs[i].raw_beacon_score = (uint16)bs;
@@ -1429,6 +888,31 @@ static void compute_raw_scores(void)
                 else if(h >= CAR_MARK_MIN_HEIGHT)    ms += (h - CAR_MARK_MIN_HEIGHT) * 20 / (CAR_MARK_MIN_HEIGHT * 2);
             }
 
+            // 凸包比加分 (0~20)：凹形(凸包比小) → V 形, 凸形(大) → 圆形
+            {
+                uint8 cr = blobs[i].marker_convex_ratio;
+                if (cr > 0) {
+                    if      (cr < 60) ms += 20;   // 深度凹形
+                    else if (cr < 70) ms += 18;
+                    else if (cr < 80) ms += 14;
+                    else if (cr < 85) ms += 10;
+                    else if (cr < 90) ms += 6;
+                    else if (cr < 95) ms += 3;
+                }
+            }
+
+            // ★★★ 距离标准差加分 (0~30)：轮廓点分散 → V 形, 集中 → 圆形
+            {
+                uint8 sr = blobs[i].marker_dist_std_ratio;
+                if (sr > 0) {
+                    if      (sr >= 70) ms += 30;   // 极分散: 明确V形(顶点近+底角远)
+                    else if (sr >= 55) ms += 25;
+                    else if (sr >= 40) ms += 15;
+                    else if (sr >= 30) ms += 8;
+                    else if (sr >= 20) ms += 3;
+                }
+            }
+
             blobs[i].raw_marker_score = ms;
 
             // 圆形惩罚：真圆形不可能是 V 形车标
@@ -1448,23 +932,13 @@ static void compute_raw_scores(void)
             // else: V 形已检出, 保留原始 ms, 不受圆形惩罚
         }
 
-        // ---- [关闭] 长条形保底车标分 ----
-        // 先关掉保底逻辑，观察原始评分是否生效
-        // 如果惩罚正确，长条信标分应自然低于车标分，不需要保底
-        /*
+        // ★★★ 先判信标: 圆形(宽高比<1.25:1)且信标分≥40的 blob 强制清零 marker 分
+        // 即使 BFS/霍夫找到了假 V 形(marker_angle_deg>0), 也不参与车标竞争
+        if (ord < 25 && blobs[i].raw_beacon_score >= 40)
         {
-            if(blobs[i].raw_marker_score == 0 && ord > 30 && blobs[i].area >= CAR_MARK_MIN_AREA)
-            {
-                // 越细长保底分越高
-                uint16 bonus = FRAG_MARKER_BONUS;  // 基础 20
-                if(ord >= 60) bonus += 10;         // 特别细长的再加 10
-                blobs[i].raw_marker_score = bonus;
-
-                // 同时压低信标分: 细长条信标分直接清零
-                blobs[i].raw_beacon_score = 0;
-            }
+            blobs[i].raw_marker_score = 0;
         }
-        */
+
     }
 }
 
@@ -1526,119 +1000,46 @@ static void save_tracks(void)
     }
 }
 
-// ==================== 车标丢失上下文信标抑制 ====================
-// 保存上一帧的车标状态 (在 save_tracks 之前由 camera_process 更新)
-static uint8  prev_frame_had_car      = 0;
-static int16  prev_car_region_cx      = 0;  // 上一帧车标质心
-static int16  prev_car_region_cy      = 0;
-static uint16 prev_car_region_range   = 0;  // 搜索范围 = max(w,h) * 2
-
-// 在 unknown→beacon 之后调用:
-// 如果上一帧有高置信度车标而当前帧丢失, 将落入上一帧车标区域的信标抑制为 UNKNOWN
-static void suppress_beacons_near_lost_marker(void)
-{
-    if(!prev_frame_had_car) return;             // 上一帧也没车, 不需要抑制
-
-    // 检查当前帧是否有车标
-    for(uint8 i = 0; i < blob_num; i++)
-        if(blobs[i].type == BLOB_CAR_MARKER) return;   // 车标还在, 不需要抑制
-
-    // 当前帧车标丢失: 抑制落入上一帧车标区域的信标
-    int16 x1 = prev_car_region_cx - (int16)prev_car_region_range;
-    int16 x2 = prev_car_region_cx + (int16)prev_car_region_range;
-    int16 y1 = prev_car_region_cy - (int16)prev_car_region_range;
-    int16 y2 = prev_car_region_cy + (int16)prev_car_region_range;
-
-    for(uint8 i = 0; i < blob_num; i++)
-    {
-        if(blobs[i].type != BLOB_BEACON) continue;
-        if((int16)blobs[i].cx >= x1 && (int16)blobs[i].cx <= x2 &&
-           (int16)blobs[i].cy >= y1 && (int16)blobs[i].cy <= y2)
-        {
-#if DEBUG_SCORES
-            printf("SUPPRESS: beacon %d (cx=%d,cy=%d) near lost car\n",
-                   i, blobs[i].cx, blobs[i].cy);
-#endif
-            blobs[i].type = BLOB_UNKNOWN;
-        }
-    }
-}
-
 // 分数平滑与最终类型判决
  static void smooth_and_decide(void)
  {
+     // 一阶滞后滤波 (保留给下游 EMA 平滑使用)
      for(uint8 i = 0; i < blob_num; i++)
      {
-         // 一阶滞后滤波
          blobs[i].filt_beacon_score = (uint16)(
              SCORE_HISTORY_WEIGHT * (float)blobs[i].filt_beacon_score +
              SCORE_CURRENT_WEIGHT * (float)blobs[i].raw_beacon_score);
          blobs[i].filt_marker_score = (uint16)(
              SCORE_HISTORY_WEIGHT * (float)blobs[i].filt_marker_score +
              SCORE_CURRENT_WEIGHT * (float)blobs[i].raw_marker_score);
+     }
 
-         // 判决用分数：首帧用原始分，匹配帧用滤波分
-         uint16 s_beacon = (blobs[i].track_id == 0)
-             ? blobs[i].raw_beacon_score : blobs[i].filt_beacon_score;
-         uint16 s_marker = (blobs[i].track_id == 0)
-             ? blobs[i].raw_marker_score : blobs[i].filt_marker_score;
+     // ★★★ 凸包法分类: 凸包面积比最小的 blob 就是 V 形车标
+     //     圆形透镜/信标的凸包比接近 100%, V 形明显凹陷(<85%)
+     {
+         uint8 car_idx = 0xFF;
+         uint8 min_cr = 100;
 
-         // 两分类比较：车标分 > 信标分 → BLOB_CAR_MARKER，否则 BLOB_BEACON
-         uint16 max_s, second_s;
-         BlobType best_type;
-         if(s_marker >= s_beacon)
+         for(uint8 i = 0; i < blob_num; i++)
          {
-             max_s = s_marker; second_s = s_beacon;
-             best_type = BLOB_CAR_MARKER;
-         }
-         else
-         {
-             max_s = s_beacon; second_s = s_marker;
-             best_type = BLOB_BEACON;
-         }
-
-         // 首帧降低门槛：max≥15 且 margin≥8；匹配帧严格：max≥30 且 margin≥12
-         uint8 min_conf = (blobs[i].track_id == 0) ? 15 : SCORE_MIN_CONFIDENCE;
-         uint8 min_margin = (blobs[i].track_id == 0) ? 8  : SCORE_MIN_MARGIN;
-
-         if(max_s >= min_conf && (max_s - second_s) >= min_margin)
-         {
-             blobs[i].type = best_type;
-         }
-         else if(blobs[i].track_id > 0)
-         {
-             // 继承历史类型，但仅当历史类型与当前最高分类一致
-             BlobType hist_type = BLOB_UNKNOWN;
-             for(uint8 p = 0; p < prev_track_num; p++)
+             uint8 cr = blobs[i].marker_convex_ratio;
+             if(cr < min_cr && blobs[i].area >= CAR_MARK_MIN_AREA)
              {
-                 if(prev_tracks[p].track_id == blobs[i].track_id)
-                 {
-                     hist_type = prev_tracks[p].type;
-                     break;
-                 }
+                 min_cr = cr;
+                 car_idx = i;
              }
-             if(hist_type == best_type)
-                 blobs[i].type = hist_type;
-             else
-                 blobs[i].type = best_type;
-         }
-         else
-         {
-             blobs[i].type = BLOB_UNKNOWN;
          }
 
-        // Marker 类型额外校验：分数必须达最低阈值，角度必须在合理范围
-        if(blobs[i].type == BLOB_CAR_MARKER)
-        {
-            uint16 ms = (blobs[i].track_id == 0) ? blobs[i].raw_marker_score : blobs[i].filt_marker_score;
-            if(ms < CAR_MARK_MIN_SCORE ||
-               blobs[i].marker_angle_deg < CAR_MARK_MIN_ANGLE_DEG ||
-               blobs[i].marker_angle_deg > CAR_MARK_MAX_ANGLE_DEG)
-            {
-                blobs[i].type = BLOB_UNKNOWN;
-            }
-        }
-    }
+         // 标记类型: 凸包比<95 的最凹 blob → 车标, 其余都是信标
+         // (信标凸包比=100%, V形=82~88%, 阈值95安全)
+         for(uint8 i = 0; i < blob_num; i++)
+         {
+             if(i == car_idx && min_cr < 95)
+                 blobs[i].type = BLOB_CAR_MARKER;
+             else
+                 blobs[i].type = BLOB_BEACON;
+         }
+     }
  }
 
 // ==================== 旧逻辑保留区域 ====================
@@ -1827,8 +1228,8 @@ static void pair_v_fragments(void)
             blobs[i].type = BLOB_CAR_MARKER;
             blobs[j].type = BLOB_CAR_MARKER;
 
-            float mid_x_f = (bx + cx) * 0.5f;
-            float mid_y_f = y_ref;
+            float mid_x_f = (ax + bx + cx) / 3.0f;
+            float mid_y_f = (ay + y_ref + y_ref) / 3.0f;
             float heading = atan2f(ay - mid_y_f, ax - mid_x_f);
 
             blobs[i].marker_vertex_x   = (uint16)(ax + 0.5f);
@@ -1864,6 +1265,29 @@ static void pair_v_fragments(void)
     #undef FRAG_MIN_OVERLAP_Y
 }
 
+// ===== 信标保护系统 =====
+// 原理: 在小车 V 形外接矩形外的信标视为"真实信标", 加入保护列表
+//       即使这些信标后来移动到 V 形内部, 也不会被误清除
+#define MAX_PROTECTED_BEACONS 16
+static uint8 protected_beacon_ids[MAX_PROTECTED_BEACONS];
+static uint8 protected_beacon_count = 0;
+
+static int is_beacon_protected(uint8 track_id)
+{
+    if (track_id == 0) return 0;
+    for (uint8 i = 0; i < protected_beacon_count; i++)
+        if (protected_beacon_ids[i] == track_id) return 1;
+    return 0;
+}
+
+static void protect_beacon(uint8 track_id)
+{
+    if (track_id == 0) return;
+    if (is_beacon_protected(track_id)) return;
+    if (protected_beacon_count < MAX_PROTECTED_BEACONS)
+        protected_beacon_ids[protected_beacon_count++] = track_id;
+}
+
     
 void camera_process(void)
 {
@@ -1883,9 +1307,6 @@ void camera_process(void)
                 image_buffer[y][x] = (image_buffer[y][x] >= IR_THRESHOLD) ? 255 : 0;
             }
         }
-
-        // 全局边缘提取 (供霍夫后备方案使用, 紧跟在二值化之后)
-        extract_edges_once();
 
         // STEP 1: 提取连通域（不分类）
         extract_blobs();
@@ -1930,105 +1351,180 @@ void camera_process(void)
             }
         }
 
-        // 更新上一帧车标状态 (供下一帧的 suppress_beacons_near_lost_marker 使用)
-        // 必须在 save_tracks() 之后但仍在当前帧处理结束前更新
+// ===== 帧间平滑 (在分类和去重之后, 只对最终确定的单个车标做 EMA) =====
+        // 使用函数级 static 变量跨帧追踪: 检测丢失时重置 prev_init
+        static float prev_vx = 0, prev_vy = 0;
+        static float prev_b1x = 0, prev_b1y = 0;
+        static float prev_b2x = 0, prev_b2y = 0;
+        static float prev_mx = 0, prev_my = 0;
+        static uint8 prev_init = 0;
         {
-            prev_frame_had_car = 0;
-            for(uint8 i = 0; i < blob_num; i++)
+            Blob *mb = NULL;
+            for (uint8 i = 0; i < blob_num; i++) {
+                if (blobs[i].type == BLOB_CAR_MARKER) { mb = &blobs[i]; break; }
+            }
+            if (mb && mb->marker_angle_deg > 0)
             {
-                if(blobs[i].type == BLOB_CAR_MARKER)
-                {
-                    prev_frame_had_car = 1;
-                    prev_car_region_cx = (int16)blobs[i].cx;
-                    prev_car_region_cy = (int16)blobs[i].cy;
-                    uint16 sz = (blobs[i].width > blobs[i].height) ?
-                                 blobs[i].width : blobs[i].height;
-                    prev_car_region_range = (sz > 30) ? (sz * 2) : 60;
-                    break;
+                #define BFS_EMA_ALPHA  0.85f
+                #define BFS_MAX_DELTA  120.0f
+
+                if (!prev_init) {
+                    prev_vx = mb->marker_vertex_x; prev_vy = mb->marker_vertex_y;
+                    prev_b1x = mb->marker_base1_x; prev_b1y = mb->marker_base1_y;
+                    prev_b2x = mb->marker_base2_x; prev_b2y = mb->marker_base2_y;
+                    prev_mx = mb->marker_base_mid_x; prev_my = mb->marker_base_mid_y;
+                    prev_init = 1;
+                } else {
+                    float cvx = (float)mb->marker_vertex_x, cvy = (float)mb->marker_vertex_y;
+                    float cb1x = (float)mb->marker_base1_x, cb1y = (float)mb->marker_base1_y;
+                    float cb2x = (float)mb->marker_base2_x, cb2y = (float)mb->marker_base2_y;
+                    float cmx = (float)mb->marker_base_mid_x, cmy = (float)mb->marker_base_mid_y;
+
+                    cvx = prev_vx + CLAMP(cvx - prev_vx, -BFS_MAX_DELTA, BFS_MAX_DELTA);
+                    cvy = prev_vy + CLAMP(cvy - prev_vy, -BFS_MAX_DELTA, BFS_MAX_DELTA);
+                    cb1x = prev_b1x + CLAMP(cb1x - prev_b1x, -BFS_MAX_DELTA, BFS_MAX_DELTA);
+                    cb1y = prev_b1y + CLAMP(cb1y - prev_b1y, -BFS_MAX_DELTA, BFS_MAX_DELTA);
+                    cb2x = prev_b2x + CLAMP(cb2x - prev_b2x, -BFS_MAX_DELTA, BFS_MAX_DELTA);
+                    cb2y = prev_b2y + CLAMP(cb2y - prev_b2y, -BFS_MAX_DELTA, BFS_MAX_DELTA);
+
+                    // B/C 身份追踪
+                    {
+                        float d_same = (cb1x-prev_b1x)*(cb1x-prev_b1x) +
+                                       (cb1y-prev_b1y)*(cb1y-prev_b1y) +
+                                       (cb2x-prev_b2x)*(cb2x-prev_b2x) +
+                                       (cb2y-prev_b2y)*(cb2y-prev_b2y);
+                        float d_cross = (cb1x-prev_b2x)*(cb1x-prev_b2x) +
+                                        (cb1y-prev_b2y)*(cb1y-prev_b2y) +
+                                        (cb2x-prev_b1x)*(cb2x-prev_b1x) +
+                                        (cb2y-prev_b1y)*(cb2y-prev_b1y);
+                        if (d_same > d_cross)
+                        {
+                            float tmp = cb1x; cb1x = cb2x; cb2x = tmp;
+                            tmp = cb1y; cb1y = cb2y; cb2y = tmp;
+                            cmx = (cb1x + cb2x) * 0.5f;
+                            cmy = (cb1y + cb2y) * 0.5f;
+                        }
+                    }
+                    cmx = prev_mx + CLAMP(cmx - prev_mx, -BFS_MAX_DELTA, BFS_MAX_DELTA);
+                    cmy = prev_my + CLAMP(cmy - prev_my, -BFS_MAX_DELTA, BFS_MAX_DELTA);
+
+                    prev_vx = prev_vx * (1.0f - BFS_EMA_ALPHA) + cvx * BFS_EMA_ALPHA;
+                    prev_vy = prev_vy * (1.0f - BFS_EMA_ALPHA) + cvy * BFS_EMA_ALPHA;
+                    prev_b1x = prev_b1x * (1.0f - BFS_EMA_ALPHA) + cb1x * BFS_EMA_ALPHA;
+                    prev_b1y = prev_b1y * (1.0f - BFS_EMA_ALPHA) + cb1y * BFS_EMA_ALPHA;
+                    prev_b2x = prev_b2x * (1.0f - BFS_EMA_ALPHA) + cb2x * BFS_EMA_ALPHA;
+                    prev_b2y = prev_b2y * (1.0f - BFS_EMA_ALPHA) + cb2y * BFS_EMA_ALPHA;
+                    prev_mx = prev_mx * (1.0f - BFS_EMA_ALPHA) + cmx * BFS_EMA_ALPHA;
+                    prev_my = prev_my * (1.0f - BFS_EMA_ALPHA) + cmy * BFS_EMA_ALPHA;
+
+                    mb->marker_vertex_x = (uint16)(prev_vx + 0.5f);
+                    mb->marker_vertex_y = (uint16)(prev_vy + 0.5f);
+                    mb->marker_base1_x = (uint16)(prev_b1x + 0.5f);
+                    mb->marker_base1_y = (uint16)(prev_b1y + 0.5f);
+                    mb->marker_base2_x = (uint16)(prev_b2x + 0.5f);
+                    mb->marker_base2_y = (uint16)(prev_b2y + 0.5f);
+                    mb->marker_base_mid_x = (uint16)(prev_mx + 0.5f);
+                    mb->marker_base_mid_y = (uint16)(prev_my + 0.5f);
                 }
+                #undef BFS_EMA_ALPHA
+                #undef BFS_MAX_DELTA
+            }
+            else
+            {
+                // 没有车标被检出时重置 EMA, 下一帧检出时直接从新位置开始
+                prev_init = 0;
             }
         }
 
         // 其余未知 blob 均视为信标
-        // 但当前帧有车标时，抑制车标附近的碎片变成信标（如 V 形断裂后的另一碎片）
         {
-            uint8 has_car = 0;
-            int16 car_cx = 0, car_cy = 0, car_range = 0;
-            for(uint8 i = 0; i < blob_num; i++)
-            {
-                if(blobs[i].type == BLOB_CAR_MARKER)
-                {
-                    has_car = 1;
-                    car_cx = (int16)blobs[i].cx;
-                    car_cy = (int16)blobs[i].cy;
-                    uint16 sz = (blobs[i].width > blobs[i].height) ?
-                                 blobs[i].width : blobs[i].height;
-                    car_range = (sz > 30) ? (sz * 2) : 60;
-                    break;
-                }
-            }
             for(uint8 i = 0; i < blob_num; i++)
             {
                 if(blobs[i].type == BLOB_UNKNOWN)
                 {
-                    if(has_car &&
-                       (int16)blobs[i].cx >= car_cx - car_range &&
-                       (int16)blobs[i].cx <= car_cx + car_range &&
-                       (int16)blobs[i].cy >= car_cy - car_range &&
-                       (int16)blobs[i].cy <= car_cy + car_range)
-                    {
-                        // 车标附近的碎片，不提升为信标
-                        continue;
-                    }
                     blobs[i].type = BLOB_BEACON;
                 }
             }
         }
 
-        // 车标丢失时抑制上一帧车标区域的信标 (防碎片被误选为信标目标)
-        suppress_beacons_near_lost_marker();
-
-#if DEBUG_HOUGH
-        // 延迟打印 H 日志: 只对最终分类为 BLOB_CAR_MARKER 的 blob 打印
-        // (之前是在 compute_car_marker_feature 中打印, 信标 blob 也会被误报 v_found=1)
-        if ((g_vision_share.frame_id % DEBUG_HOUGH_DIV) == 0)
+        // 清除 V 形区域内的误识别信标 + 信标保护系统
+        // 原理: 在 V 形外部的信标视为"真实", 加入保护列表
+        //       内部信标如果不在保护列表中 → 误识别, 清除
         {
-            for (uint8 i = 0; i < blob_num; i++)
+            // 记录小车自身 track_id, 防止灭灯后被误分类为 BEACON 时被清除
+            static uint8 car_track_id = 0;
+
+            Blob *car = 0;
+            for(uint8 i = 0; i < blob_num; i++)
             {
-                if (blobs[i].type != BLOB_CAR_MARKER) continue;
-                
-                Blob *b = &blobs[i];
-                uint8 v_found = (b->marker_angle_deg >= CAR_MARK_MIN_ANGLE_DEG) ? 1u : 0u;
-                uint8 hough_v = b->marker_hough_v;
-                
-                printf("H,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
-                       (unsigned long)g_vision_share.frame_id,
-                       (unsigned int)b->area, (unsigned int)b->cx, (unsigned int)b->cy,
-                       (unsigned int)b->width, (unsigned int)b->height,
-                       (unsigned int)b->dbg_hough_cnt, (unsigned int)HOUGH_VOTE_THRESH,
-                       (unsigned int)b->dbg_hough_num_angles,
-                       (unsigned int)v_found,
-                       (unsigned int)hough_v,
-                       v_found ? (unsigned int)b->marker_angle_deg : 0u,
-                       v_found ? (unsigned int)b->marker_height : 0u,
-                       v_found ? (unsigned int)b->marker_arm1_len : 0u,
-                       v_found ? (unsigned int)b->marker_arm2_len : 0u,
-                       v_found ? (unsigned int)b->marker_base_len : 0u,
-                       v_found ? (unsigned int)b->marker_base1_x : 0u,
-                       v_found ? (unsigned int)b->marker_base1_y : 0u,
-                       v_found ? (unsigned int)b->marker_base2_x : 0u,
-                       v_found ? (unsigned int)b->marker_base2_y : 0u,
-                       v_found ? (unsigned int)b->marker_base_mid_x : 0u,
-                       v_found ? (unsigned int)b->marker_base_mid_y : 0u);
-                for (uint8 li = 0; li < b->dbg_hough_cnt && li < HOUGH_MAX_LINES; li++) {
-                    printf(",%d,%d,%u",
-                           (int)b->dbg_hough_rho[li], (int)b->dbg_hough_theta[li],
-                           (unsigned int)b->dbg_hough_votes[li]);
+                if(blobs[i].type == BLOB_CAR_MARKER)
+                {
+                    car = &blobs[i];
+                    break;
                 }
-                printf("\r\n");
+            }
+            if(car)
+            {
+                car_track_id = car->track_id;
+                if(car_track_id > 0)
+                    protect_beacon(car_track_id);  // 小车 ID 永久受保护
+
+                int margin = 15;
+                int xmin = (car->cx > (uint16)margin) ? (int)(car->cx - car->width/2) - margin : 0;
+                int xmax = (int)(car->cx + car->width/2) + margin;
+                int ymin = (car->cy > (uint16)margin) ? (int)(car->cy - car->height/2) - margin : 0;
+                int ymax = (int)(car->cy + car->height/2) + margin;
+
+                // 第一遍: 保护外部的信标 (真实信标)
+                for(uint8 i = 0; i < blob_num; i++)
+                {
+                    if(blobs[i].type == BLOB_BEACON)
+                    {
+                        int32 px = (int32)blobs[i].cx;
+                        int32 py = (int32)blobs[i].cy;
+                        // 在矩形外部 → 真实信标, 加入保护
+                        if(px < xmin || px > xmax || py < ymin || py > ymax)
+                        {
+                            protect_beacon(blobs[i].track_id);
+                        }
+                    }
+                }
+
+                // 第二遍: 清除内部的信标, 但跳过受保护的、高分信标、或小车自身
+                // 高分信标（beacon_score > 60）即使位置在内部也视为真实
+                for(uint8 i = 0; i < blob_num; i++)
+                {
+                    if(blobs[i].type == BLOB_BEACON)
+                    {
+                        int32 px = (int32)blobs[i].cx;
+                        int32 py = (int32)blobs[i].cy;
+                        if(px >= xmin && px <= xmax &&
+                           py >= ymin && py <= ymax)
+                        {
+                            // 受保护的 track_id → 跳过
+                            if(is_beacon_protected(blobs[i].track_id))
+                                continue;
+                            // 小车自身 track_id → 跳过 (防灭灯误分类)
+                            if(car_track_id > 0 && blobs[i].track_id == car_track_id)
+                                continue;
+                            // 高分信标 → 位置在内部也视为真实
+                            uint16 bscore = (blobs[i].track_id == 0)
+                                ? blobs[i].raw_beacon_score
+                                : blobs[i].filt_beacon_score;
+                            if(bscore > 60)
+                                continue;
+                            blobs[i].type = BLOB_UNKNOWN;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                car_track_id = 0;  // 未检测到小车, 重置
             }
         }
-#endif
+
+
 
 #if DEBUG_SCORES
         {
@@ -2314,6 +1810,49 @@ void camera_process(void)
                g_vision_share.target_found ? 1 : 2);
         #endif
 
+        // 上位机可视化输出 (默认关闭, 由 DEBUG_REALTIME_MONITOR 控制)
+        #if DEBUG_REALTIME_MONITOR
+        {
+            // H行：V形车标 (frame_id,area,v_found,angle,arm1,arm2,base_len,
+            //        base1_x,base1_y,base2_x,base2_y,mid_x,mid_y,vertex_x,vertex_y)
+            for(uint8 hi = 0; hi < blob_num; hi++)
+            {
+                if(blobs[hi].type == BLOB_CAR_MARKER && blobs[hi].marker_angle_deg > 0)
+                {
+                    printf("H,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                           (unsigned long)g_vision_share.frame_id,
+                           (unsigned int)blobs[hi].area,
+                           (unsigned int)blobs[hi].marker_angle_deg,
+                           (unsigned int)blobs[hi].marker_arm1_len,
+                           (unsigned int)blobs[hi].marker_arm2_len,
+                           (unsigned int)blobs[hi].marker_base_len,
+                           (unsigned int)blobs[hi].marker_base1_x,
+                           (unsigned int)blobs[hi].marker_base1_y,
+                           (unsigned int)blobs[hi].marker_base2_x,
+                           (unsigned int)blobs[hi].marker_base2_y,
+                           (unsigned int)blobs[hi].marker_base_mid_x,
+                           (unsigned int)blobs[hi].marker_base_mid_y,
+                           (unsigned int)blobs[hi].marker_vertex_x,
+                           (unsigned int)blobs[hi].marker_vertex_y);
+                    break;  // 只输出第一个 V 形车标
+                }
+            }
+
+            // B行：信标 (frame_id,cx,cy,filt_score)
+            for(uint8 bi = 0; bi < blob_num; bi++)
+            {
+                if(blobs[bi].type == BLOB_BEACON)
+                {
+                    printf("B,%lu,%u,%u,%u\r\n",
+                           (unsigned long)g_vision_share.frame_id,
+                           (unsigned int)blobs[bi].cx,
+                           (unsigned int)blobs[bi].cy,
+                           (unsigned int)blobs[bi].filt_beacon_score);
+                }
+            }
+        }
+        #endif
+
         // 调试输出：小车与信标的像素误差（仅在有识别时输出）
        //if(g_vision_share.target_found || g_vision_share.car_found)
        //{
@@ -2346,6 +1885,21 @@ void camera_process(void)
 #endif
 
 #if VISION_ENABLE_IPS_DISPLAY
+        // 在车头方向画圆标记
+        {
+            for(uint8 i = 0; i < blob_num; i++)
+            {
+                if(blobs[i].type == BLOB_CAR_MARKER && blobs[i].marker_angle_deg > 0)
+                {
+                    // 在顶点 (车头) 画一个实心圆
+                    int vx = (int)blobs[i].marker_vertex_x;
+                    int vy = (int)blobs[i].marker_vertex_y;
+                    draw_circle(vx, vy, 8, 200);      // 外圆
+                    draw_circle(vx, vy, 5, 255);      // 内圆
+                    break;
+                }
+            }
+        }
         ips200_displayimage03x(image_buffer[0], CAMERA_W, CAMERA_H);
 #endif
 
