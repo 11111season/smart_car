@@ -69,7 +69,7 @@ typedef struct
     int16 car_x;
     int16 car_y;
     uint16 car_found;
-    uint16 reserved;
+    uint16 car_fresh;       // 1=真实检测, 0=衰减保留值 (前馈用)
 
     float heading_angle;
 
@@ -81,6 +81,7 @@ typedef struct
     float  disp_imu_gx, disp_of_height, disp_target;
     float  disp_volt;
     float  vel_tgt_x, vel_tgt_y;       // 速度环目标 (CM7_0 写入, 上位机显示)
+    float  ff_vel_x, ff_vel_y;         // 像素前馈量 (CM7_0 写入, 上位机显示)
     uint32 disp_dirty;   // 非0表示有新数据显示
 
     // === 视觉调试数据 (CM7_1 camera.c 写入, 主循环显示) ===

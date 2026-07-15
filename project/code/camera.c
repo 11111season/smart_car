@@ -1465,57 +1465,19 @@ void camera_process(void)
             }
             if(car)
             {
-                car_track_id = car->track_id;
-                if(car_track_id > 0)
-                    protect_beacon(car_track_id);  // 小车 ID 永久受保护
+                // 轮廓区域: blob 外接矩形 +1px
+                int xmin = (int)(car->cx - car->width/2) - 1;
+                int xmax = (int)(car->cx + car->width/2) + 1;
+                int ymin = (int)(car->cy - car->height/2) - 1;
+                int ymax = (int)(car->cy + car->height/2) + 1;
 
-                int margin = 15;
-                int xmin = (car->cx > (uint16)margin) ? (int)(car->cx - car->width/2) - margin : 0;
-                int xmax = (int)(car->cx + car->width/2) + margin;
-                int ymin = (car->cy > (uint16)margin) ? (int)(car->cy - car->height/2) - margin : 0;
-                int ymax = (int)(car->cy + car->height/2) + margin;
-
-                // 第一遍: 保护外部的信标 (真实信标)
+                // 轮廓内所有信标直接清除, 无例外
                 for(uint8 i = 0; i < blob_num; i++)
                 {
-                    if(blobs[i].type == BLOB_BEACON)
-                    {
-                        int32 px = (int32)blobs[i].cx;
-                        int32 py = (int32)blobs[i].cy;
-                        // 在矩形外部 → 真实信标, 加入保护
-                        if(px < xmin || px > xmax || py < ymin || py > ymax)
-                        {
-                            protect_beacon(blobs[i].track_id);
-                        }
-                    }
-                }
-
-                // 第二遍: 清除内部的信标, 但跳过受保护的、高分信标、或小车自身
-                // 高分信标（beacon_score > 60）即使位置在内部也视为真实
-                for(uint8 i = 0; i < blob_num; i++)
-                {
-                    if(blobs[i].type == BLOB_BEACON)
-                    {
-                        int32 px = (int32)blobs[i].cx;
-                        int32 py = (int32)blobs[i].cy;
-                        if(px >= xmin && px <= xmax &&
-                           py >= ymin && py <= ymax)
-                        {
-                            // 受保护的 track_id → 跳过
-                            if(is_beacon_protected(blobs[i].track_id))
-                                continue;
-                            // 小车自身 track_id → 跳过 (防灭灯误分类)
-                            if(car_track_id > 0 && blobs[i].track_id == car_track_id)
-                                continue;
-                            // 高分信标 → 位置在内部也视为真实
-                            uint16 bscore = (blobs[i].track_id == 0)
-                                ? blobs[i].raw_beacon_score
-                                : blobs[i].filt_beacon_score;
-                            if(bscore > 60)
-                                continue;
-                            blobs[i].type = BLOB_UNKNOWN;
-                        }
-                    }
+                    if(blobs[i].type != BLOB_BEACON) continue;
+                    int px = (int)blobs[i].cx, py = (int)blobs[i].cy;
+                    if(px >= xmin && px <= xmax && py >= ymin && py <= ymax)
+                        blobs[i].type = BLOB_UNKNOWN;
                 }
             }
             else
@@ -1703,6 +1665,7 @@ void camera_process(void)
             g_vision_share.car_x = car_x;
             g_vision_share.car_y = car_y;
             g_vision_share.car_found = 1;
+            g_vision_share.car_fresh = 1;   // 真实检测
             g_vision_share.heading_angle = atan2f(filtered_sin, filtered_cos);
 
             // 检测到时更新保留坐标
@@ -1711,20 +1674,51 @@ void camera_process(void)
         }
         else
         {
-            // 丢失后平滑衰减归零
-            retain_car_x *= CAR_RETAIN_DECAY;
-            retain_car_y *= CAR_RETAIN_DECAY;
-            if(fabsf(retain_car_x) < 1.0f) retain_car_x = 0.0f;
-            if(fabsf(retain_car_y) < 1.0f) retain_car_y = 0.0f;
-
-            g_vision_share.car_x = (int16)retain_car_x;
-            g_vision_share.car_y = (int16)retain_car_y;
-            g_vision_share.car_found = (retain_car_x != 0.0f || retain_car_y != 0.0f) ? 1 : 0;
-            g_vision_share.heading_angle = 0.0f;
-            is_first_heading = 1;
-
-            if(!g_vision_share.car_found)
-                update_marker(0, 0, 0);
+            // V形未识别到 → 尝试用方向长宽比>150的碎片中心平均值
+            float frag_sum_x = 0.0f, frag_sum_y = 0.0f;
+            uint8 frag_cnt = 0;
+            for(uint8 i = 0; i < blob_num; i++)
+                {
+                    if(blobs[i].type == BLOB_CAR_MARKER) continue;
+                    if(blobs[i].area < CAR_MARK_MIN_AREA) continue;
+                    int32 omax = (int32)(blobs[i].owidth > blobs[i].oheight
+                                         ? blobs[i].owidth : blobs[i].oheight);
+                    int32 omin = (int32)(blobs[i].owidth < blobs[i].oheight
+                                         ? blobs[i].owidth : blobs[i].oheight);
+                    if(omin <= 0 || omax * 100 / omin <= 150) continue;
+                    frag_sum_x += (float)blobs[i].cx;
+                    frag_sum_y += (float)blobs[i].cy;
+                    frag_cnt++;
+                }
+            if(frag_cnt > 0)
+            {
+                // 碎片中心平均值作为小车坐标
+                retain_car_x = frag_sum_x / (float)frag_cnt;
+                retain_car_y = frag_sum_y / (float)frag_cnt;
+                g_vision_share.car_x = (int16)retain_car_x;
+                g_vision_share.car_y = (int16)retain_car_y;
+                g_vision_share.car_found = 1;
+                g_vision_share.car_fresh = 1;   // 碎片跟踪视为有效检测
+                g_vision_share.heading_angle = 0.0f;
+                is_first_heading = 1;
+                update_marker((uint8)retain_car_x, (uint8)retain_car_y, 1);
+            }
+            else
+            {
+                // 无碎片也无V形 → 平滑衰减到图像中心
+                retain_car_x = (retain_car_x - CAMERA_W/2) * CAR_RETAIN_DECAY + CAMERA_W/2;
+                retain_car_y = (retain_car_y - CAMERA_H/2) * CAR_RETAIN_DECAY + CAMERA_H/2;
+                if(fabsf(retain_car_x - CAMERA_W/2) < 0.5f) retain_car_x = CAMERA_W/2;
+                if(fabsf(retain_car_y - CAMERA_H/2) < 0.5f) retain_car_y = CAMERA_H/2;
+                g_vision_share.car_x = (int16)retain_car_x;
+                g_vision_share.car_y = (int16)retain_car_y;
+                g_vision_share.car_found = (retain_car_x != (float)(CAMERA_W/2) || retain_car_y != (float)(CAMERA_H/2)) ? 1 : 0;
+                g_vision_share.car_fresh = 0;   // 衰减值, 非真实检测
+                g_vision_share.heading_angle = 0.0f;
+                is_first_heading = 1;
+                if(!g_vision_share.car_found)
+                    update_marker(0, 0, 0);
+            }
         }
 
         // 评分调试数据: 写入最优小车的分数/角度/方法
@@ -1828,7 +1822,7 @@ void camera_process(void)
             }
             if(h_mx >= 0)
             {
-                printf("H,%lu,%u,%u,%u,%u,%u,%u,%u,%.2f,%.1f,%.2f,%.1f,%.1f,%.2f,%.2f,%.2f\r\n",
+                printf("H,%lu,%u,%u,%u,%u,%u,%u,%u,%.2f,%.1f,%.2f,%.1f,%.1f,%.2f,%.2f,%.2f,%.3f,%.3f\r\n",
                        (unsigned long)g_vision_share.frame_id,
                        (unsigned int)blobs[h_idx].marker_base1_x,
                        (unsigned int)blobs[h_idx].marker_base1_y,
@@ -1844,7 +1838,9 @@ void camera_process(void)
                        (double)g_vision_share.disp_pitch,
                        (double)g_vision_share.vel_tgt_x,
                        (double)g_vision_share.vel_tgt_y,
-                       (double)g_vision_share.disp_world_vy);
+                       (double)g_vision_share.disp_world_vy,
+                       (double)g_vision_share.ff_vel_x,
+                       (double)g_vision_share.ff_vel_y);
             }
 
             // B行：信标 (frame_id,cx,cy,filt_score) — 仅检测到时输出
@@ -1908,13 +1904,11 @@ void camera_process(void)
 #endif
 
 #if VISION_ENABLE_IPS_DISPLAY
-        // 以下两行在 image_buffer 上画调试标记 + 送 IPS 显示
-        // 如不需要显示摄像头图像可注释掉 ips200_displayimage03x 行
+        // 已识别V形车标: 顶点画圆
         for(uint8 i = 0; i < blob_num; i++)
         {
             if(blobs[i].type == BLOB_CAR_MARKER && blobs[i].marker_angle_deg > 0)
             {
-                // 在顶点 (车头) 画一个实心圆
                 int vx = (int)blobs[i].marker_vertex_x;
                 int vy = (int)blobs[i].marker_vertex_y;
                 draw_circle(vx, vy, 8, 200);      // 外圆
@@ -1922,7 +1916,25 @@ void camera_process(void)
                 break;
             }
         }
-        // ips200_displayimage03x(image_buffer[0], CAMERA_W, CAMERA_H);  // 取消注释以显示摄像头图像
+        // 待定碎片: 无V形时显示方向长宽比>150的碎片 → 白框+白十字
+        if(!found_car)
+        {
+            for(uint8 i = 0; i < blob_num; i++)
+            {
+                if(blobs[i].type == BLOB_CAR_MARKER) continue;
+                int32 omax = (int32)(blobs[i].owidth > blobs[i].oheight
+                                     ? blobs[i].owidth : blobs[i].oheight);
+                int32 omin = (int32)(blobs[i].owidth < blobs[i].oheight
+                                     ? blobs[i].owidth : blobs[i].oheight);
+                int32 elon = (omin > 0) ? (omax * 100 / omin) : 100;
+                if(elon > 150 && blobs[i].area >= CAR_MARK_MIN_AREA)
+                {
+                    draw_white_box((uint8)blobs[i].cx, (uint8)blobs[i].cy, 6);
+                    draw_white_cross((uint8)blobs[i].cx, (uint8)blobs[i].cy);
+                }
+            }
+        }
+        ips200_displayimage03x(image_buffer[0], CAMERA_W, CAMERA_H);  // 二值化红外图像
 #endif
 
         mt9v03x_finish_flag = 0;

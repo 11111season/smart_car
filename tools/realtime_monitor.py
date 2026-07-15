@@ -95,7 +95,9 @@ def parse_line(text: str):
                  "angle":int(parts[8]),"height":float(parts[9]),"heading":float(parts[10]),
                  "speed":float(parts[11]),"roll":float(parts[12]),"pitch":float(parts[13]),
                  "vel_tgt_x":float(parts[14]),"vel_tgt_y":float(parts[15]),
-                 "world_vy":float(parts[16]) if len(parts) >= 17 else 0}
+                 "world_vy":float(parts[16]) if len(parts) >= 17 else 0,
+                 "ff_vel_x":float(parts[17]) if len(parts) >= 19 else 0,
+                 "ff_vel_y":float(parts[18]) if len(parts) >= 19 else 0}
             with lock:
                 car_data.append(d); car_latest = d
                 timestamps.append(time.time()); last_h_time = time.time(); frame_cnt += 1
@@ -114,7 +116,8 @@ def parse_line(text: str):
                  "angle":0,"height":float(parts[2]),"heading":float(parts[3]),
                  "speed":float(parts[4]),"roll":float(parts[5]),"pitch":float(parts[6]),
                  "vel_tgt_x":float(parts[7]),"vel_tgt_y":float(parts[8]),
-                 "world_vy":float(parts[9]) if len(parts) >= 10 else 0}
+                 "world_vy":float(parts[9]) if len(parts) >= 10 else 0,
+                 "ff_vel_x":0.0,"ff_vel_y":0.0}
             with lock:
                 car_data.append(d); car_latest = d
                 timestamps.append(time.time()); last_h_time = time.time(); frame_cnt += 1
@@ -250,6 +253,8 @@ def update_plot():
         lines.append(f"   vx: {d['speed']:.2f}  vy: {vy:.2f} m/s  roll={d['roll']:.1f}deg  pitch={d['pitch']:.1f}deg")
         if 'vel_tgt_x' in d:
             lines.append(f"   Vtgt: {d['vel_tgt_x']:.2f},{d['vel_tgt_y']:.2f} m/s")
+        if 'ff_vel_x' in d:
+            lines.append(f"   FF: {d['ff_vel_x']:.3f},{d['ff_vel_y']:.3f} m/s")
     if b_visible:
         lines.append(f"Beacon: ({beac[0]},{beac[1]})  score={beac[2]}")
     ax_left.text(CAM_W-5,5,"\n".join(lines),fontsize=10,color="white",

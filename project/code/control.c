@@ -22,9 +22,11 @@ extern float get_filtered_car_x(void);
 extern float get_filtered_car_y(void);
 
 // 定义一个视觉像素误差到期望速度的转换系数（根据实际调试缩放，初始可以给个小值）
-#define PIXEL_TO_VEL_SCALE       0.005f   // 像素误差 → 速度目标
+#define PIXEL_TO_VEL_SCALE       0.000f   // 像素误差 → 速度目标 (废弃，改用动态)
+#define FF_SCALE_MAX             0.00f   // 前馈最大比例 (低速时)
+#define FF_SPEED_CEIL            0.4f     // 前馈截止速度 (m/s)，超过后前馈=0
 #define BEACON_HOLD_FRAMES_MAX   100     // 丢失后保持帧数 (约500ms@200Hz)
-#define BEACON_FADE_DECAY        0.92f   // 超时后每帧衰减系数 (越接近1衰减越慢)
+#define BEACON_FADE_DECAY        0.93f   // 超时后每帧衰减系数 (越接近1衰减越慢)
 #define PIXELS_PER_DEG           1.3f  // 像素/度 (实测 50px/16°=3.125)
 
 
@@ -156,11 +158,18 @@ void stabilization(float dt)
                 prev_car_x = car_x; prev_car_y = car_y;
                 ff_inited = 1;
             } else {
-                float vel_x = (car_x - prev_car_x) * 40.0f;  // 像素/帧→像素/秒
-                float vel_y = (car_y - prev_car_y) * 40.0f;
+                float dx = car_x - prev_car_x;
+                float dy = car_y - prev_car_y;
                 prev_car_x = car_x; prev_car_y = car_y;
-                ff_vel_x = vel_x * PIXEL_TO_VEL_SCALE;  // 像素/秒→期望速度(m/s)
-                ff_vel_y = vel_y * PIXEL_TO_VEL_SCALE;
+                // 非真实检测(衰减值)或跳变>20px, 清零前馈
+                if (!g_vision_share.car_fresh || fabsf(dx) > 20.0f) dx = 0.0f;
+                if (!g_vision_share.car_fresh || fabsf(dy) > 20.0f) dy = 0.0f;
+                // 动态前馈比例: 飞机速度>0.8m/s时线性衰减到0
+                float speed = sqrtf(world_data.vx*world_data.vx + world_data.vy*world_data.vy);
+                float ff_scale = FF_SCALE_MAX * (1.0f - speed / FF_SPEED_CEIL);
+                if (ff_scale < 0.0f) ff_scale = 0.0f;
+                ff_vel_x = dx * 40.0f * ff_scale;
+                ff_vel_y = dy * 40.0f * ff_scale;
             }
             PIDPosX.target = car_x;
             PIDPosY.target = car_y;
@@ -171,6 +180,8 @@ void stabilization(float dt)
             // 写共享内存供上位机显示
             g_vision_share.vel_tgt_x = PIDPosX_Vel.target;
             g_vision_share.vel_tgt_y = PIDPosY_Vel.target;
+            g_vision_share.ff_vel_x = ff_vel_x;
+            g_vision_share.ff_vel_y = ff_vel_y;
             last_roll_tgt  = PIDRoll.target;
             last_pitch_tgt = PIDPitch.target;
             PIDRoll.target  = PIDPosY_Vel.out;
