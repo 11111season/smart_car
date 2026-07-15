@@ -1789,10 +1789,10 @@ void camera_process(void)
         }
         else
         {
-            decay_err_x = 0;
-            decay_err_y = 0;
-            g_vision_share.err_x = 0;
-            g_vision_share.err_y = 0;
+            decay_err_x = (int16)((float)decay_err_x * ERR_DECAY_FACTOR);
+            decay_err_y = (int16)((float)decay_err_y * ERR_DECAY_FACTOR);
+            g_vision_share.err_x = decay_err_x;
+            g_vision_share.err_y = decay_err_y;
             g_vision_share.target_found = 0;
         }
         // 共享内存刷新: 双核数据同步
@@ -1828,7 +1828,7 @@ void camera_process(void)
             }
             if(h_mx >= 0)
             {
-                printf("H,%lu,%u,%u,%u,%u,%u,%u,%u,%.2f,%.1f,%.2f,%.1f,%.1f\r\n",
+                printf("H,%lu,%u,%u,%u,%u,%u,%u,%u,%.2f,%.1f,%.2f,%.1f,%.1f,%.2f,%.2f,%.2f\r\n",
                        (unsigned long)g_vision_share.frame_id,
                        (unsigned int)blobs[h_idx].marker_base1_x,
                        (unsigned int)blobs[h_idx].marker_base1_y,
@@ -1841,7 +1841,10 @@ void camera_process(void)
                        (double)(g_vision_share.heading_angle * 57.29578f),
                        (double)g_vision_share.disp_world_vx,
                        (double)g_vision_share.disp_roll,
-                       (double)g_vision_share.disp_pitch);
+                       (double)g_vision_share.disp_pitch,
+                       (double)g_vision_share.vel_tgt_x,
+                       (double)g_vision_share.vel_tgt_y,
+                       (double)g_vision_share.disp_world_vy);
             }
 
             // B行：信标 (frame_id,cx,cy,filt_score) — 仅检测到时输出
@@ -1859,13 +1862,16 @@ void camera_process(void)
             // I行：IMU/状态数据 — 仅无 V 形时发送 (有 V 时 H 行已包含)
             if(h_mx < 0)
             {
-                printf("I,%lu,%.2f,%.1f,%.2f,%.1f,%.1f\r\n",
+                printf("I,%lu,%.2f,%.1f,%.2f,%.1f,%.1f,%.2f,%.2f,%.2f\r\n",
                        (unsigned long)g_vision_share.frame_id,
                        (float)g_vision_share.disp_of_height,
                        (double)(g_vision_share.heading_angle * 57.29578f),
                        (double)g_vision_share.disp_world_vx,
                        (double)g_vision_share.disp_roll,
-                       (double)g_vision_share.disp_pitch);
+                       (double)g_vision_share.disp_pitch,
+                       (double)g_vision_share.vel_tgt_x,
+                       (double)g_vision_share.vel_tgt_y,
+                       (double)g_vision_share.disp_world_vy);
             }
         }
         #endif

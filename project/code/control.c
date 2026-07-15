@@ -22,7 +22,7 @@ extern float get_filtered_car_x(void);
 extern float get_filtered_car_y(void);
 
 // 定义一个视觉像素误差到期望速度的转换系数（根据实际调试缩放，初始可以给个小值）
-#define PIXEL_TO_VEL_SCALE       0.02f   // 像素误差 → 速度目标
+#define PIXEL_TO_VEL_SCALE       0.005f   // 像素误差 → 速度目标
 #define BEACON_HOLD_FRAMES_MAX   100     // 丢失后保持帧数 (约500ms@200Hz)
 #define BEACON_FADE_DECAY        0.92f   // 超时后每帧衰减系数 (越接近1衰减越慢)
 #define PIXELS_PER_DEG           1.3f  // 像素/度 (实测 50px/16°=3.125)
@@ -134,20 +134,43 @@ void stabilization(float dt)
     PIDRoll.target  = 0.0f;
     PIDPitch.target = 0.0f;
 #elif POSITION_HOLD == 1
+    // 安全起飞锁: 首次到达 1m 高度后才启用速度/位置环
+    static uint8_t pos_ctrl_enabled = 0;
+    if (!pos_ctrl_enabled && world_data.pz >= 1.0f) {
+        pos_ctrl_enabled = 1;
+    }
+ 
     if (++ctrl_div >= 5) {
         ctrl_div = 0;
-        if (g_vision_share.car_found) {
+        if (g_vision_share.car_found && pos_ctrl_enabled) {
             float car_x = get_filtered_car_x();
             float car_y = get_filtered_car_y();
             // 姿态补偿: 前倾→car_x↑, 右倾→car_y↓
             car_x -= eulerAngle.pitch * PIXELS_PER_DEG;
             car_y += eulerAngle.roll  * PIXELS_PER_DEG;
+            // 像素速度前馈: 计算小车在图像中的移动速度，叠加到速度环目标
+            static float prev_car_x = 0, prev_car_y = 0;
+            static uint8_t ff_inited = 0;
+            float ff_vel_x = 0.0f, ff_vel_y = 0.0f;
+            if (!ff_inited) {
+                prev_car_x = car_x; prev_car_y = car_y;
+                ff_inited = 1;
+            } else {
+                float vel_x = (car_x - prev_car_x) * 40.0f;  // 像素/帧→像素/秒
+                float vel_y = (car_y - prev_car_y) * 40.0f;
+                prev_car_x = car_x; prev_car_y = car_y;
+                ff_vel_x = vel_x * PIXEL_TO_VEL_SCALE;  // 像素/秒→期望速度(m/s)
+                ff_vel_y = vel_y * PIXEL_TO_VEL_SCALE;
+            }
             PIDPosX.target = car_x;
             PIDPosY.target = car_y;
             PID_Update(&PIDPosX, PIDPosX.target, (float)(CAMERA_W / 2), dt);
             PID_Update(&PIDPosY, PIDPosY.target, (float)(CAMERA_H / 2), dt);
-            PID_Update(&PIDPosX_Vel, PIDPosX.out, world_data.vx, dt);
-            PID_Update(&PIDPosY_Vel, PIDPosY.out, world_data.vy, dt);
+            PID_Update(&PIDPosX_Vel, PIDPosX.out + ff_vel_x, world_data.vx, dt);
+            PID_Update(&PIDPosY_Vel, PIDPosY.out + ff_vel_y, world_data.vy, dt);
+            // 写共享内存供上位机显示
+            g_vision_share.vel_tgt_x = PIDPosX_Vel.target;
+            g_vision_share.vel_tgt_y = PIDPosY_Vel.target;
             last_roll_tgt  = PIDRoll.target;
             last_pitch_tgt = PIDPitch.target;
             PIDRoll.target  = PIDPosY_Vel.out;

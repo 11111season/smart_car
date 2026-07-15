@@ -45,9 +45,9 @@ extern vision_share_t g_vision_share;
 
 static uint32 last_frame_id = 0;
 
-// 丢帧保护：超过 1s 无新帧时，坐标衰减到 0，防止小车抽搐
-#define FRAME_DROP_TIMEOUT  100     // 100次 × 10ms = 1s (100Hz ISR)
-#define FRAME_DROP_DECAY    0.98f   // 每10ms衰减系数
+// 丢帧保护：超过 1s 无新帧时，坐标衰减到 0，防止小车抽搐 (实际 25Hz, 100次 = 4s)
+#define FRAME_DROP_TIMEOUT  100
+#define FRAME_DROP_DECAY    0.94f   // 每帧衰减系数 (0.94^75≈1% @3s @25Hz)
 
 static uint32_t frame_drop_cnt = 0;
 
@@ -137,6 +137,7 @@ void pit0_ch2_isr()                     // 定时器通道 2 的中断服务函�
     g_vision_share.disp_mag_x    = qmc5883l_heading;
     g_vision_share.disp_of_dx    = of.dx;
     g_vision_share.disp_world_vx = world_data.vx;
+    g_vision_share.disp_world_vy = world_data.vy;
     g_vision_share.disp_imu_gx   = imu_data.gyro_x;
     g_vision_share.disp_of_height = of.height;
     g_vision_share.disp_target   = PIDYaw.target;

@@ -57,7 +57,8 @@ running = True
 car_latest = None
 beacon_latest = None
 camera_frame = None
-CAM_W, CAM_H = 320, 240
+latest_heading = 0.0  # 最新航向角 (独立存储, 无车也画坐标轴)
+CAM_W, CAM_H = 188, 120
 
 # ── 串口 ──
 def serial_reader():
@@ -84,15 +85,17 @@ def serial_reader():
     ser.close()
 
 def parse_line(text: str):
-    global frame_cnt, beacon_xy, last_h_time, last_b_time, car_latest, beacon_latest
+    global frame_cnt, beacon_xy, last_h_time, last_b_time, car_latest, beacon_latest, latest_heading
     parts = text.split(",")
     if not parts: return
-    if text.startswith("H,") and len(parts) >= 14:
+    if text.startswith("H,") and len(parts) >= 16:
         try:
             d = {"frame_id":int(parts[1]),"b1x":int(parts[2]),"b1y":int(parts[3]),
                  "b2x":int(parts[4]),"b2y":int(parts[5]),"vx":int(parts[6]),"vy":int(parts[7]),
                  "angle":int(parts[8]),"height":float(parts[9]),"heading":float(parts[10]),
-                 "speed":float(parts[11]),"roll":float(parts[12]),"pitch":float(parts[13])}
+                 "speed":float(parts[11]),"roll":float(parts[12]),"pitch":float(parts[13]),
+                 "vel_tgt_x":float(parts[14]),"vel_tgt_y":float(parts[15]),
+                 "world_vy":float(parts[16]) if len(parts) >= 17 else 0}
             with lock:
                 car_data.append(d); car_latest = d
                 timestamps.append(time.time()); last_h_time = time.time(); frame_cnt += 1
@@ -105,11 +108,13 @@ def parse_line(text: str):
                 beacon_hx.append(int(parts[1])); beacon_hy.append(int(parts[2]))
                 last_b_time = time.time()
         except: pass
-    elif text.startswith("I,") and len(parts) >= 7:
+    elif text.startswith("I,") and len(parts) >= 9:
         try:
             d = {"frame_id":int(parts[1]),"b1x":0,"b1y":0,"b2x":0,"b2y":0,"vx":0,"vy":0,
                  "angle":0,"height":float(parts[2]),"heading":float(parts[3]),
-                 "speed":float(parts[4]),"roll":float(parts[5]),"pitch":float(parts[6])}
+                 "speed":float(parts[4]),"roll":float(parts[5]),"pitch":float(parts[6]),
+                 "vel_tgt_x":float(parts[7]),"vel_tgt_y":float(parts[8]),
+                 "world_vy":float(parts[9]) if len(parts) >= 10 else 0}
             with lock:
                 car_data.append(d); car_latest = d
                 timestamps.append(time.time()); last_h_time = time.time(); frame_cnt += 1
@@ -137,12 +142,14 @@ if HAVE_CV2 and args.camera is not None:
         ret, f0 = tmp.read()
         if ret: cam_res = (f0.shape[1], f0.shape[0])
         tmp.release()
+cw, ch = cam_res
 
 # ── 创建双视图 ──
 fig, (ax_left, ax_right) = plt.subplots(
-    1, 2, figsize=(14, 6),
-    gridspec_kw={"width_ratios": [2.5, 1]}
+    1, 2, figsize=(12, 5),
+    gridspec_kw={"width_ratios": [1, 2.5]}
 )
+fig.set_dpi(100)
 fig.suptitle(f"Real-time Vision Monitor - {args.port} @ {args.baud}")
 
 # 左图: 虚拟坐标
@@ -153,7 +160,6 @@ ax_left.grid(True, alpha=0.15); ax_left.set_aspect("equal")
 ax_left.set_title("Virtual Coordinate View")
 
 # 右图: 摄像头
-cw, ch = cam_res
 ax_right.set_xlim(0, cw); ax_right.set_ylim(ch, 0)
 ax_right.set_aspect("equal")
 ax_right.set_title("Camera View")
@@ -168,12 +174,37 @@ def update_plot():
         h_age = time.time() - last_h_time; b_age = time.time() - last_b_time
         frame = camera_frame
 
-    # ── 左图: 虚拟坐标 (复用原有逻辑) ──
+    # ── 左图: 虚拟坐标 ──
     ax_left.cla()
     ax_left.set_xlim(0, CAM_W); ax_left.set_ylim(CAM_H, 0)
     ax_left.set_xlabel("x (px)"); ax_left.set_ylabel("y (px)")
     ax_left.grid(True, alpha=0.15); ax_left.set_aspect("equal")
     ax_left.set_title("Virtual Coordinate View")
+
+    # 画面中心十字 (淡灰色)
+    ax_left.axhline(y=CAM_H/2, color='gray', alpha=0.3, linewidth=0.5, linestyle='--')
+    ax_left.axvline(x=CAM_W/2, color='gray', alpha=0.3, linewidth=0.5, linestyle='--')
+
+    # 机体坐标轴 (红色, 随航向旋转)
+    heading_rad = math.radians(latest_heading)
+    cx, cy = CAM_W/2, CAM_H/2
+    arrow_len = 40
+    # X 轴 (机头方向)
+    dx = -math.cos(heading_rad) * arrow_len
+    dy = math.sin(heading_rad) * arrow_len
+    ax_left.annotate('', xy=(cx+dx, cy+dy), xytext=(cx, cy),
+                     arrowprops=dict(arrowstyle='->', color='red', lw=2.5),
+                     zorder=15)
+    ax_left.text(cx+dx*1.2, cy+dy*1.2, 'X', color='red', fontsize=11,
+                 fontweight='bold', ha='center', va='center', zorder=15)
+    # Y 轴 (机体右向)
+    dx = math.sin(heading_rad) * arrow_len
+    dy = -math.cos(heading_rad) * arrow_len
+    ax_left.annotate('', xy=(cx+dx, cy+dy), xytext=(cx, cy),
+                     arrowprops=dict(arrowstyle='->', color='red', lw=2.5),
+                     zorder=15)
+    ax_left.text(cx+dx*1.2, cy+dy*1.2, 'Y', color='red', fontsize=11,
+                 fontweight='bold', ha='center', va='center', zorder=15)
 
     v_visible = bool(cars) and h_age < TIMEOUT and cars[-1]["angle"] > 0
     if v_visible:
@@ -214,8 +245,11 @@ def update_plot():
     # 非视觉数据常显示 (使用最近的有效值)
     if cars:
         d = cars[-1]
-        lines.append(f"   height={d['height']:.2f}m  heading={d['heading']:.0f}deg  speed={d['speed']:.2f}m/s")
-        lines.append(f"   roll={d['roll']:.1f}deg  pitch={d['pitch']:.1f}deg")
+        lines.append(f"   height={d['height']:.2f}m  heading={d['heading']:.0f}deg")
+        vy = d.get('world_vy', 0)
+        lines.append(f"   vx: {d['speed']:.2f}  vy: {vy:.2f} m/s  roll={d['roll']:.1f}deg  pitch={d['pitch']:.1f}deg")
+        if 'vel_tgt_x' in d:
+            lines.append(f"   Vtgt: {d['vel_tgt_x']:.2f},{d['vel_tgt_y']:.2f} m/s")
     if b_visible:
         lines.append(f"Beacon: ({beac[0]},{beac[1]})  score={beac[2]}")
     ax_left.text(CAM_W-5,5,"\n".join(lines),fontsize=10,color="white",
@@ -254,6 +288,10 @@ def update_plot():
         ax_right.scatter([int(cx*sx)],[int(cy*sy)],c="cyan",s=80,marker="o",edgecolors="blue",linewidth=2,zorder=4)
         ax_right.axvline(x=int(cx*sx),color="cyan",alpha=0.2,linewidth=0.5)
         ax_right.axhline(y=int(cy*sy),color="cyan",alpha=0.2,linewidth=0.5)
+
+    # 摄像头画面中心十字
+    ax_right.axhline(y=ch/2, color='white', alpha=0.4, linewidth=0.5, linestyle='--')
+    ax_right.axvline(x=cw/2, color='white', alpha=0.4, linewidth=0.5, linestyle='--')
 
     fig.tight_layout()
     fig.canvas.draw_idle()

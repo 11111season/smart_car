@@ -77,8 +77,10 @@ typedef struct
     float  disp_roll, disp_pitch, disp_yaw;
     uint16 disp_m1, disp_m2, disp_m3, disp_m4;
     float  disp_mag_x, disp_of_dx, disp_world_vx;
+    float  disp_world_vy;              // 世界坐标系 Y 轴速度
     float  disp_imu_gx, disp_of_height, disp_target;
     float  disp_volt;
+    float  vel_tgt_x, vel_tgt_y;       // 速度环目标 (CM7_0 写入, 上位机显示)
     uint32 disp_dirty;   // 非0表示有新数据显示
 
     // === 视觉调试数据 (CM7_1 camera.c 写入, 主循环显示) ===

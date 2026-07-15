@@ -83,6 +83,7 @@ void HC06_SendCmd(const char *str)
 void HC06_SendVisionError(int16 err_x, int16 err_y, uint8_t flag)
 {
     char buf[32];
+  //  sprintf(buf, "#%d,%d,%d$", 0, 0, 2);    
     sprintf(buf, "#%d,%d,%d$", err_x, err_y, flag);
     hc06_tx_string(buf);
 }

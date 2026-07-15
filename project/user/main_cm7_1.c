@@ -38,10 +38,11 @@ int main(void)
         ips200_show_string(16*0,  16*12, "mag_x=:"); ips200_show_float(16*6, 16*12, SHARED->disp_mag_x,  3,5);
 //        ips200_show_string(16*0,  16*13, "of.dx=:"); ips200_show_float(16*6, 16*13, SHARED->disp_of_dx,  3,5);
         ips200_show_string(16*0,  16*14, "w.vx=:");  ips200_show_float(16*6, 16*14, SHARED->disp_world_vx, 3,5);
-        ips200_show_string(16*0,  16*15, "imu.gx=:");ips200_show_float(16*6, 16*15, SHARED->disp_imu_gx, 3,5);
-//        ips200_show_string(16*0,  16*16, "of.h=:");  ips200_show_float(16*6, 16*16, SHARED->disp_of_height, 3,5);
-        ips200_show_string(16*0,  16*17, "tgt=:");   ips200_show_float(16*6, 16*17, SHARED->disp_target,  3,5);
-        ips200_show_string(16*0,  16*18, "volt=:");  ips200_show_float(16*6, 16*18, SHARED->disp_volt,    2,5);
+        ips200_show_string(16*0,  16*15, "w.vy=:");  ips200_show_float(16*6, 16*15, SHARED->disp_world_vy, 3,5);
+        ips200_show_string(16*0,  16*16, "tvx=:");   ips200_show_float(16*6, 16*16, SHARED->vel_tgt_x, 3,5);
+        ips200_show_string(16*0,  16*17, "tvy=:");   ips200_show_float(16*6, 16*17, SHARED->vel_tgt_y, 3,5);
+        ips200_show_string(16*0,  16*18, "imu.gx=:");ips200_show_float(16*6, 16*18, SHARED->disp_imu_gx, 3,5);
+        ips200_show_string(16*0,  16*19, "tgt=:");   ips200_show_float(16*6, 16*19, SHARED->disp_target,  3,5);
 
 #elif IPS_DISPLAY_MODE == 1
          // ======== 模式1: 视觉调试模式 (小车评分机制) ========
