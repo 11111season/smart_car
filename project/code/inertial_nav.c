@@ -52,7 +52,7 @@ static uint8_t wp_idx = 0;
 static pt_t    seg_start;
 
 #define POS_KP  1.0f    // 位置闭环P增益
-#define POS_MAX 0.20f   // 位置闭环最大速度(m/s)
+#define POS_MAX 0.17f   // 位置闭环最大速度(m/s)
 
 /*==================================================== 状态机 ====================================================*/
 enum { BCN_IDLE, BCN_RECORD, BCN_DONE, BCN_GO };
@@ -79,7 +79,7 @@ float   fused_yaw = 0.0f;
 static uint8_t  patrol_wp = 0;          // 当前巡逻目标航点索引 (0 或 1)
 static uint64_t patrol_arrive_us = 0;   // 到达航点时的 time_us 时间戳
 uint8_t patrol_active = 0;              // 巡逻模式激活标志, ISR可清除
-#define PATROL_WAIT_US  3000000         // 航点等待超时: 3秒 (微秒)
+#define PATROL_WAIT_US  2000000         // 航点等待超时: 3秒 (微秒)
 
 /*==================================================== 磁力计融合 ====================================================*/
 static float mag_offset = 0.0f;    // yaw零点偏移
