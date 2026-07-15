@@ -140,6 +140,7 @@ void stabilization(float dt)
     static uint8_t pos_ctrl_enabled = 0;
     if (!pos_ctrl_enabled && world_data.pz >= 1.0f) {
         pos_ctrl_enabled = 1;
+        PIDYaw.target = eulerAngle.yaw;   // 首次到达1m: 锁当前偏航角
     }
  
     if (++ctrl_div >= 5) {
