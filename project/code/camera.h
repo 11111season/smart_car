@@ -18,7 +18,7 @@
 
 // 调试开关：0=关闭, 1=每帧打印 #err_x,err_y,n$ HC06 数据帧
 #define DEBUG_HC06_FRAME        0
-#define DEBUG_REALTIME_MONITOR  1   // 上位机可视化输出 (H, 和 B, 行)
+#define DEBUG_REALTIME_MONITOR  0   // 上位机可视化输出 (H, B, I行)
 
 // 调试开关：0=关闭 (霍夫检测已废弃)
 #define DEBUG_HOUGH             0

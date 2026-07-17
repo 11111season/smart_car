@@ -110,7 +110,7 @@ static void process_vision_frame(void)
 void pit0_ch0_isr()                     // 定时器通道 0 的中断服务函数 (200Hz)
 {
     pit_isr_flag_clear(PIT_CH0);
-    stabilization(0.005);             
+    flight_control(0.005);             // 飞行状态机，内部调用 stabilization()
 }
 
 void pit0_ch1_isr()                     // 定时器通道 1 的中断服务函数

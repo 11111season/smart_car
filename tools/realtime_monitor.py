@@ -8,8 +8,8 @@
     pip install pyserial matplotlib numpy opencv-python
 
 用法:
-    python realtime_monitor.py COM25 115200 --camera
-    python realtime_monitor.py COM25 115200 --camera 1
+cd tools
+python realtime_monitor.py COM25 115200 --camera
 """
 
 import sys, threading, time, argparse, math

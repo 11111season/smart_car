@@ -8,7 +8,12 @@
 
 extern uint8_t out_flag;
 extern flight_state_e flight_state;
+extern _euler_param_st eulerAngle;
+extern _world_param_st world_data;
+extern _height_param_st alt;
+extern uint16_t m1, m2, m3, m4;
 extern _PID_param_st *(pPidObject[]);
+extern volatile uint8_t g_car_flag3_pending;   // control.c 中定义，无信标自动降落通知小车
 
 // 处理来自小车的指令: #1$=起浆, #2$=PID控制, #3$=停止
 static void process_drone_command(uint8_t cmd)
@@ -27,16 +32,24 @@ static void process_drone_command(uint8_t cmd)
             printf("UNLOCK (out=1)\r\n");
             break;
 
-        case 2:     // #2$ → 锁偏航 + 起飞
+        case 2:     // #2$ → 起飞; 若已在飞行则降落
             if (!unlocked) {
                 printf("ignored (not unlocked yet)\r\n");
                 break;
             }
-            PIDYaw.target = eulerAngle.yaw;  // 锁当前偏航角为零点
-            printf("yaw locked=%.1f\r\n", eulerAngle.yaw);
-            out_flag = 2;
-            flight_state = STATE_TAKEOFF;
-            printf("TAKEOFF (out=2)\r\n");
+            if (flight_state == STATE_FLY) {
+                // 飞行中再次收到 #2$ → 降落
+                flight_state = STATE_LAND;
+                printf("LAND (from FLY)\r\n");
+            } else if (flight_state == STATE_LAND || flight_state == STATE_TAKEOFF) {
+                printf("ignored (in LAND/TAKEOFF already)\r\n");
+            } else {
+                PIDYaw.target = eulerAngle.yaw;  // 锁当前偏航角为零点
+                printf("yaw locked=%.1f\r\n", eulerAngle.yaw);
+                out_flag = 2;
+                flight_state = STATE_TAKEOFF;
+                printf("TAKEOFF (out=2)\r\n");
+            }
             break;
 
         case 3:     // #3$ → 停止输出
@@ -73,7 +86,7 @@ int main(void)
     out_flag = 0;
 
     uint32 tof_poll = 0;
-    uint32 tof_debug = 0;
+    uint32 flight_print = 0;             // 10Hz VOFA输出计数器
 
     while(true)  
     {
@@ -83,43 +96,36 @@ int main(void)
             vl53l5cx_get_distance();
         }
 
-        // [关闭] TOF 测试打印，避免干扰 DEBUG_SCORES
-        /*
-        if (++tof_debug >= 500) {
-            tof_debug = 0;
-            printf("TOF: z0=%4umm(st=%u) z5=%4umm(st=%u) z6=%4umm(st=%u) z9=%4umm(st=%u) z10=%4umm(st=%u)"
-                   " | pz=%.2fm vz=%.2fm/s\r\n",
-                   vl53l5cx_distance_mm,
-                   vl53l5cx_zone_result.status[0],
-                   vl53l5cx_zone_result.distance_mm[5], vl53l5cx_zone_result.status[5],
-                   vl53l5cx_zone_result.distance_mm[6], vl53l5cx_zone_result.status[6],
-                   vl53l5cx_zone_result.distance_mm[9], vl53l5cx_zone_result.status[9],
-                   vl53l5cx_zone_result.distance_mm[10], vl53l5cx_zone_result.status[10],
-                   (double)world_data.pz, (double)world_data.vz);
-        }
-        */
-
-       // 每200次打印磁力计校准调试信息
-//       if (++debug_cnt >= 200) {
-//           debug_cnt = 0;
-//           printf("mag_raw:%.3f,%.3f,%.3f | cal:%.3f,%.3f,%.3f\r\n",
-//                  (double)mag_raw_gauss[0], (double)mag_raw_gauss[1], (double)mag_raw_gauss[2],
-//                  (double)mag_calib[0], (double)mag_calib[1], (double)mag_calib[2]);
-//       }
-       //printf("%d,%d,%d\r\n", qmc5883l_mag_x, qmc5883l_mag_y, qmc5883l_mag_z);
-    //   printf("%5d,%5d,%5d,%5d\r\n",m1,m2,m3,m4);
-  // printf("%2f,%2f,%2f,%2f,%2f,%2f\r\n",PIDPosX_Vel.out,PIDPosY_Vel.out,world_data.vx,world_data.vy,PIDPosX_Vel.test,PIDPosY_Vel.test);
-//    printf("%5f,%5f,%5f,%5f\r\n",imu_data.gyro_x_pt1,imu_data.gyro_y_pt1,eulerAngle.roll,eulerAngle.pitch);         
-  //   printf("%5f,%5f,%5f,%5f\r\n",PIDRoll.out,PIDPitch.out,PIDVelY.out,PIDVelX.out);
-      //printf("%5f,%5f,%5f,%5f,%5f\r\n",PIDHeight.out,PIDVelH.out,world_data.vz,alt.target_height,world_data.pz);
-  //    printf("%5f,%5f,%5f\r\n",qmc5883l_mag_x_gauss,qmc5883l_mag_y_gauss);
       HC06_Task();                        // 解析来自小车的 #N$ 指令
 
       {
           uint8_t cmd = HC06_GetCmd();    // 获取指令
           if(cmd) process_drone_command(cmd);
       }
-      
+
+      // 无信标自动降落: 在主循环发送 flag=3 给小车 (避免在 ISR 中调用 sprintf)
+      if (g_car_flag3_pending) {
+          g_car_flag3_pending = 0;
+          HC06_SendVisionError(0, 0, 3);
+      }
+
+      // 10Hz VOFA+ 打印: 角速度期望,角速度测量,速度融合后,速度融合前,加速度,速度期望,高度
+      if (++flight_print >= 50) {
+          flight_print = 0;
+          printf("%.2f,%.2f,%.2f, %.2f,%.2f,%.2f, "
+                 "%.3f,%.3f,%.3f, %.3f,%.3f, "
+                 "%.2f,%.2f,%.2f, %.2f,%.2f, "
+                 "%.3f,%.3f\r\n",
+                 (double)PIDVelX.target, (double)PIDVelY.target, (double)PIDVelZ.target,
+                 (double)imu_data.gyro_x_pt1, (double)imu_data.gyro_y_pt1, (double)imu_data.gyro_z_pt1,
+                 (double)world_data.vx, (double)world_data.vy, (double)world_data.vz,
+                 (double)of.vx_pt1, (double)of.vy_pt1,
+                 (double)imu_data.acc_x, (double)imu_data.acc_y, (double)imu_data.acc_z,
+                 (double)PIDPosX_Vel.target, (double)PIDPosY_Vel.target,
+                 (double)world_data.pz, (double)alt.target_height);
+         // printf("%d,%d,%d,%d\r\n",m1,m2,m3,m4);
+      }
+
       // out_flag=1 为电机测试模式：直接输出固定占空比，不经过 stabilization 混控
       if (out_flag == 1) {
           small_driver_set_duty(3000, 3000, 3000, 3000);

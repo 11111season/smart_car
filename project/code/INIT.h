@@ -86,6 +86,9 @@ typedef volatile struct
     uint8_t mag_fusion_enabled;   // 磁力计融合使能
     uint8_t att_mode_full;        // 姿态模式 (1=完整姿态, 0=纯角速度)
     uint8_t takeoff_phase;        // 1=起飞阶段(5秒内线性升高中)
+    uint8_t yaw_angle_enabled;    // 0=偏航仅角速度环(起飞用), 1=偏航角度环+角速度环(正常飞行)
+    uint8_t pos_ctrl_enabled;     // 1=位置/速度环已使能 (到达1m高度后)
+    uint8_t height_vel_only;      // 1=跳过高度外环，直控速度环(降落阶段1用)
 
     //rc
     uint8_t unlock;
@@ -167,7 +170,9 @@ typedef struct {
 typedef enum{
     STATE_LOCK,
     STATE_UNLOCK,
-    STATE_TAKEOFF
+    STATE_TAKEOFF,
+    STATE_FLY,          // 正常飞行: 由 TAKEOFF 完成后自动切换
+    STATE_LAND          // 降落
 } flight_state_e;
 
 typedef enum

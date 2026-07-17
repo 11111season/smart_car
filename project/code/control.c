@@ -62,6 +62,11 @@ uint8_t out_flag;   // 电机输出使能标志: 1=输出, 0=停转
 
 float takeoff_base_thr = HOVER_THRUST;  // 起飞阶段基础油门，从3900平滑上升到HOVER_THRUST
 
+// 无信标自动降落计时器
+float g_no_beacon_timer = 0.0f;
+uint8_t g_no_beacon_flag3_sent = 0;
+volatile uint8_t g_car_flag3_pending = 0;    // 主循环检测此标志发送 "#0,0,3$"
+
 // flight_control() — 完整状态机，当前未使用（已被 stabilization@200Hz 直接替代）
 // 保留 flight_state 变量及枚举供 future use
 
@@ -100,11 +105,16 @@ void stabilization(float dt)
     }
 
     // ---------- 高度控制 ----------
+    // 注: alt.target_height 由 flight_control() 状态机管理
     float THR;
-   alt.target_height = TAKEOFF_TARGET_HEIGHT;
 #if HEIGHT == 1
-    PID_Update(&PIDHeight, alt.target_height, world_data.pz, dt);
-    PID_Update(&PIDVelH, PIDHeight.out, world_data.vz, dt);
+    if (flag.height_vel_only) {
+        // 降落阶段1: 跳过高度外环，直接用速度环控速
+        PID_Update(&PIDVelH, PIDVelH.target, world_data.vz, dt);
+    } else {
+        PID_Update(&PIDHeight, alt.target_height, world_data.pz, dt);
+        PID_Update(&PIDVelH, PIDHeight.out, world_data.vz, dt);
+    }
 #endif
     THR = takeoff_base_thr + PIDVelH.out;
 
@@ -122,6 +132,21 @@ void stabilization(float dt)
     }
 #endif
 
+    // ---------- 起飞阶段: 基础油门 3500→HOVER_THRUST 线性增加 (5秒) ----------
+    // 只抬基础油门，高度 PID 输出不受限，电机仍有完整控制权
+    {
+        static float thr_ramp_timer = 0.0f;
+        static uint8_t prev_phase = 0;
+        if (flag.takeoff_phase) {
+            if (!prev_phase) thr_ramp_timer = 0.0f;
+            thr_ramp_timer += dt;
+            float ramp_ratio = thr_ramp_timer / 1.5f;
+            if (ramp_ratio > 1.0f) ramp_ratio = 1.0f;
+            takeoff_base_thr = 3500.0f + (float)(HOVER_THRUST - 3500) * ramp_ratio;
+        }
+        prev_phase = flag.takeoff_phase;
+    }
+
     // ---------- 位置/速度环 → 角度目标 (统一40Hz分频) ----------
     // 控制模式由 POSITION_HOLD 宏选择:
     //   0 = 禁用速度环, 目标角度=0(纯自稳)
@@ -136,16 +161,9 @@ void stabilization(float dt)
     PIDRoll.target  = 0.0f;
     PIDPitch.target = 0.0f;
 #elif POSITION_HOLD == 1
-    // 安全起飞锁: 首次到达 1m 高度后才启用速度/位置环
-    static uint8_t pos_ctrl_enabled = 0;
-    if (!pos_ctrl_enabled && world_data.pz >= 1.0f) {
-        pos_ctrl_enabled = 1;
-        PIDYaw.target = eulerAngle.yaw;   // 首次到达1m: 锁当前偏航角
-    }
- 
     if (++ctrl_div >= 5) {
         ctrl_div = 0;
-        if (g_vision_share.car_found && pos_ctrl_enabled) {
+        if (g_vision_share.car_found && flag.pos_ctrl_enabled) {
             float car_x = get_filtered_car_x();
             float car_y = get_filtered_car_y();
             // 姿态补偿: 前倾→car_x↑, 右倾→car_y↓
@@ -188,11 +206,13 @@ void stabilization(float dt)
             PIDRoll.target  = PIDPosY_Vel.out;
             PIDPitch.target = PIDPosX_Vel.out;
         } else {
-            // 无小车: 保持水平0度，不跑位置环
+            // 无小车/未使能: 速度环 V=0 保持定点 (不跑位置环)
+            PID_Update(&PIDPosX_Vel, 0, world_data.vx, dt);
+            PID_Update(&PIDPosY_Vel, 0, world_data.vy, dt);
             last_roll_tgt  = PIDRoll.target;
             last_pitch_tgt = PIDPitch.target;
-            PIDRoll.target  = 0.0f;
-            PIDPitch.target = 0.0f;
+            PIDRoll.target  = PIDPosY_Vel.out;
+            PIDPitch.target = PIDPosX_Vel.out;
         }
     }
     pid_ff_roll  = (PIDRoll.target  - last_roll_tgt)  * ANG_RATE_FF_GAIN / (5.0f * dt);
@@ -219,6 +239,10 @@ void stabilization(float dt)
     // 所有模式的前馈已在位置/速度环段统一计算(pid_ff_roll/pitch)
     float roll_ff  = pid_ff_roll;
     float pitch_ff = pid_ff_pitch;
+    if (flag.takeoff_phase) {
+        roll_ff = 0.0f;     // 起飞阶段禁用角速度前馈，
+        pitch_ff = 0.0f;    // 避免速度环Ki清零后前馈干扰姿态
+    }
     PIDPosX_Vel.test = pitch_ff;
     PIDPosY_Vel.test = roll_ff;
 
@@ -230,9 +254,15 @@ void stabilization(float dt)
     PID_Update_d_measure(&PIDPitch, PIDPitch.target, eulerAngle.pitch, dt);
     PID_Update(&PIDVelY, PIDPitch.out + pitch_ff, imu_data.gyro_y_pt1, dt);
 
-    // Yaw轴: 角度环(带最短路径处理) + 角速度环
-    PID_Update_Yaw(&PIDYaw, PIDYaw.target, eulerAngle.yaw, dt);
-    PID_Update(&PIDVelZ, PIDYaw.out, imu_data.gyro_z_pt1, dt);
+    // Yaw轴: 由 flight_control() 状态机管理 flag.yaw_angle_enabled
+    //   0 = 起飞阶段: 仅角速度环维持偏航角速度为0, 防磁力计干扰导致自旋
+    //   1 = 正常飞行: 角度环(带最短路径) + 角速度环
+    if (flag.yaw_angle_enabled) {
+        PID_Update_Yaw(&PIDYaw, PIDYaw.target, eulerAngle.yaw, dt);
+        PID_Update(&PIDVelZ, PIDYaw.out, imu_data.gyro_z_pt1, dt);
+    } else {
+        PID_Update(&PIDVelZ, 0.0f, imu_data.gyro_z_pt1, dt);
+    }
 #endif
 
     // ==============================================
@@ -298,79 +328,248 @@ void hover_lock(void)
 
 
 // =============================================================================
-// 起飞控制
+// 飞行状态机 (取代旧的 take_off)
 // =============================================================================
-// 功能: 自动起飞至目标高度
-// 策略:
-//   - 起飞前: 禁用磁力计融合 (避免地面磁场干扰)
-//   - 离地阶段(step=1): 角度控制，仅保持水平
-//   - 上升阶段(step=2): 逐渐升至目标高度，同时检测磁力计融合条件
-//   - 完成阶段(step=3): 切换至定点悬停模式
+// 功能: 管理整个飞行过程的状态切换
+// 状态:
+//   STATE_LOCK    — 停浆，复位所有标志
+//   STATE_UNLOCK  — 电机测试 (通过 #1$ 指令进入)
+//   STATE_TAKEOFF — 起飞爬升 (通过 #2$ 指令进入)
+//   STATE_FLY     — 正常飞行 (完成起飞后自动切换)
+//
+// 解耦设计:
+//   flight_control() 管理飞行阶段、设置 PID 目标和标志
+//   stabilization()  是纯控制器，不含任何状态逻辑
 // =============================================================================
-void take_off(float dt)
+void flight_control(float dt)
 {
-    static uint8_t step = 0;
-    static float vel_ki_saved = 0.0f;          // 保存原始速度环KI，起飞后恢复
-
-    switch(step)
+    switch(flight_state)
     {
-        // ============ Step 0: 起飞前初始化 ============
-        case 0:
-            PIDYaw.target = eulerAngle.yaw;           // 锁当前偏航
-            alt.target_height = TAKEOFF_TARGET_HEIGHT;   // 直接设为宏定义的目标高度
-            PIDPosX.target = world_data.px;            // 锁当前X位置(起飞即定点)
-            PIDPosY.target = world_data.py;            // 锁当前Y位置
-            flag.takeoff_phase = 1;                    // 标记起飞阶段(光流无I)
+        // ============ STATE_LOCK: 停浆 ============
+        case STATE_LOCK:
+            out_flag = 0;
+            m1 = 0; m2 = 0; m3 = 0; m4 = 0;
+            // 复位所有飞行阶段标志
+            flag.yaw_angle_enabled  = 0;
+            flag.pos_ctrl_enabled   = 0;
+            flag.takeoff_phase      = 0;
+            flag.hover_lock         = 0;
+            flag.height_vel_only    = 0;
+            g_no_beacon_timer       = 0.0f;
+            g_no_beacon_flag3_sent  = 0;
+            // 恢复角速度 Kp 到配置默认值 (降落阶段2可能增加了0.5)
+            PIDVelX.kp              = VELX_KP;
+            PIDVelY.kp              = VELY_KP;
+            PIDVelZ.kp              = VELZ_KP;
+            // 恢复水平速度环 Kp (降落阶段2可能增加了1)
+            PIDPosX_Vel.kp          = POS_VELX_KP;
+            PIDPosY_Vel.kp          = POS_VELY_KP;
+            takeoff_base_thr        = HOVER_THRUST;
+            break;
 
-            // 起飞阶段速度环纯P：清零积分避免起飞时累积
-            vel_ki_saved = PIDPosX_Vel.ki;
-            PIDPosX_Vel.ki = 0.0f;
-            PIDPosX_Vel.integ = 0.0f;
-            PIDPosY_Vel.ki = 0.0f;
-            PIDPosY_Vel.integ = 0.0f;
+        // ============ STATE_UNLOCK: 电机测试 ============
+        case STATE_UNLOCK:
+            out_flag = 1;
+            stabilization(dt);      // 运行姿态控制，但主循环中 out_flag==1 会覆盖为固定占空比
+            break;
 
-            step = 1;
-            stabilization(dt);                         // step 0也执行姿态控制
-        break;
-
-        // ============ Step 1: 5秒线性升至目标高度 ============
-        case 1:
+        // ============ STATE_TAKEOFF: 起飞爬升 ============
+        case STATE_TAKEOFF:
         {
-            // 基础油门直接使用悬停油门，不做平滑
-            takeoff_base_thr = HOVER_THRUST;
+            out_flag = 2;
+            flag.yaw_angle_enabled  = 0;     // 起飞阶段: 偏航仅角速度环 (目标=0)，防止磁力计干扰导致自旋
+            flag.pos_ctrl_enabled   = 0;     // 起飞阶段: 垂直爬升, 不追车
+            flag.takeoff_phase      = 1;     // 光流无积分
 
-            // 线性增加目标高度：TAKEOFF_TARGET_HEIGHT/8 = 0.15m/s
-            alt.target_height += (TAKEOFF_TARGET_HEIGHT / 8.0f) * dt;
+            static uint8_t step = 0;
 
-            // 到达或超过目标高度 → 钳位并结束起飞
-            if(alt.target_height >= TAKEOFF_TARGET_HEIGHT)
-            {
-                alt.target_height = TAKEOFF_TARGET_HEIGHT;
-                flag.takeoff_phase = 0;                // 结束起飞阶段
+            // Step 0: 初始化 (仅在进入 TAKEOFF 时执行一次)
+            if (step == 0) {
+                PIDYaw.target       = eulerAngle.yaw;             // 锁初始偏航
+                alt.target_height   = 0.0f;                       // 从0开始线性升高
+                PIDPosX.target      = world_data.px;              // 锁当前位置
+                PIDPosY.target      = world_data.py;
 
-                // 恢复速度环PI：稳定后加入积分消除静差
-                PIDPosX_Vel.ki = vel_ki_saved;
-                PIDPosY_Vel.ki = vel_ki_saved;
+                // 速度环去积分，避免起飞时累积 (到达目标高度后恢复)
+                PIDPosX_Vel.ki      = 0.0f;
+                PIDPosX_Vel.integ   = 0.0f;
+                PIDPosY_Vel.ki      = 0.0f;
+                PIDPosY_Vel.integ   = 0.0f;
 
-                flag.hover_lock = 1;                   // 预锁悬停点
-                hover_lock();
-                stabilization(dt);                     // 进入定点悬停
-                return;
+                step = 1;
             }
 
-            // 起飞即定点: 纯速度环，目标速度=0
-            PIDPosX_Vel.target = 0.0f;
-            PIDPosY_Vel.target = 0.0f;
-            PID_Update(&PIDPosX_Vel, PIDPosX_Vel.target, world_data.vx, dt);
-            PID_Update(&PIDPosY_Vel, PIDPosY_Vel.target, world_data.vy, dt);
-            PIDRoll.target  = PIDPosX_Vel.out;
-            PIDPitch.target = PIDPosY_Vel.out;
-            
-            stabilization(dt);
+            // Step 1: 线性爬升
+            // 注: takeoff_base_thr 由 stabilization() 内 ramp 代码控制 (3500→HOVER_THRUST 1.5s)
+            // 此处不赋值，避免覆盖 ramp 结果
+            alt.target_height += (TAKEOFF_TARGET_HEIGHT / 1.5f) * dt;
+
+            // 到达1m实际高度: 锁定当前偏航，恢复角度环
+            if (!flag.yaw_angle_enabled && world_data.pz >= 1.0f) {
+                flag.yaw_angle_enabled = 1;
+                PIDYaw.target = eulerAngle.yaw;   // 锁当前真实物理偏航
+            }
+
+            // 到达目标高度: 结束起飞，进入正常飞行
+            if (alt.target_height >= TAKEOFF_TARGET_HEIGHT) {
+                alt.target_height = TAKEOFF_TARGET_HEIGHT;
+                flag.takeoff_phase = 0;
+
+                // 恢复速度环积分 (直接用宏常量，无需保存)
+                PIDPosX_Vel.ki = POS_VEL_KI;
+                PIDPosY_Vel.ki = POS_VEL_KI;
+
+                flag.hover_lock = 1;
+                hover_lock();
+
+                step = 0;                           // 复位 substep，支持再次起飞
+                flight_state = STATE_FLY;
+                break;
+            }
+
+            stabilization(dt);      // 所有控制由 stabilization 统一处理 (速度环 V=0 / 追车)
+            break;
         }
-        break;
+
+        // ============ STATE_FLY: 正常飞行 ============
+        case STATE_FLY:
+            out_flag = 2;
+            flag.pos_ctrl_enabled = 1;                    // 开启位置环追车
+            alt.target_height = TAKEOFF_TARGET_HEIGHT;    // 维持目标高度
+
+            // 若还未使能偏航角度环（理论上已完成，但兜底处理）
+            if (!flag.yaw_angle_enabled && world_data.pz >= 1.0f) {
+                flag.yaw_angle_enabled = 1;
+                PIDYaw.target = eulerAngle.yaw;
+            }
+
+            // ---------- 10秒自动降落 ----------
+            g_no_beacon_timer += dt;
+            if (g_no_beacon_timer >= NO_BEACON_LAND_TIMEOUT && !g_no_beacon_flag3_sent) {
+                g_no_beacon_flag3_sent = 1;
+                g_car_flag3_pending = 1;             // 主循环发送 flag=3
+                printf("[AUTO] 10s timeout, landing...\r\n");
+                flight_state = STATE_LAND;
+            }
+
+            stabilization(dt);
+            break;
+
+        // ============ STATE_LAND: 降落 ============
+        case STATE_LAND:
+            land(dt);
+            break;
     }
 }
 
+
+// ============ land(): 降落函数 ============
+// 阶段1: 高度速度环 0.1m/s 下降至 0.3m
+// 阶段2: 锁定当前油门，4s线性衰减至0 + 近地锁降判定
+void land(float dt)
+{
+    static uint8_t step = 0;
+    static uint8_t ground_detect_cnt = 0;
+    static float lock_thr = 0.0f;
+    static float decay_timer = 0.0f;
+    static float saved_kp[3] = {0};  // VelX, VelY, VelZ
+    static float saved_posvel_kp[2] = {0};  // PosX_Vel, PosY_Vel
+
+    switch (step) {
+        case 0:     // ---------- 初始化 ----------
+            flag.yaw_angle_enabled = 0;        // 偏航仅角速度环，不自旋
+            flag.height_vel_only   = 1;        // 高度速度环直控
+            takeoff_base_thr = HOVER_THRUST;
+
+            alt.target_height = world_data.pz;  // 保持当前高度目标不变
+
+            // 保存原始角速度 Kp 和速度环 Kp，阶段2需要增加
+            saved_kp[0] = PIDVelX.kp;
+            saved_kp[1] = PIDVelY.kp;
+            saved_kp[2] = PIDVelZ.kp;
+            saved_posvel_kp[0] = PIDPosX_Vel.kp;
+            saved_posvel_kp[1] = PIDPosY_Vel.kp;
+
+            // 设速度环目标 -0.2m/s (向下)
+            PIDVelH.target = -0.2f;
+            PIDVelH.integ  = 0.0f;
+
+            // 水平速度环去积分
+            PIDPosX_Vel.ki    = 0.0f;
+            PIDPosX_Vel.integ = 0.0f;
+            PIDPosY_Vel.ki    = 0.0f;
+            PIDPosY_Vel.integ = 0.0f;
+            PIDPosX_Vel.target = 0.0f;
+            PIDPosY_Vel.target = 0.0f;
+
+            PIDYaw.target = eulerAngle.yaw;
+            ground_detect_cnt = 0;
+            decay_timer = 0.0f;
+
+            step = 1;
+            break;
+
+        case 1:     // ---------- 阶段1: 速度环-0.1m/s下降至0.3m ----------
+            // stabilization() 中 flag.height_vel_only 生效，直接跟踪 PIDVelH.target = -0.1f
+
+            // 水平速度保持 (纯 Kp)
+            PID_Update(&PIDPosX_Vel, 0.0f, world_data.vx, dt);
+            PID_Update(&PIDPosY_Vel, 0.0f, world_data.vy, dt);
+            PIDRoll.target  = PIDPosX_Vel.out;
+            PIDPitch.target = PIDPosY_Vel.out;
+
+            stabilization(dt);
+
+            // 实际高度到达 0.3m → 冻结油门，进入衰减
+            if (world_data.pz <= 0.3f) {
+                flag.height_vel_only = 0;       // 恢复串级模式
+                // 角速度 Kp 增加 0.5，增强近地抗风能力
+                PIDVelX.kp = saved_kp[0] + 0.7f;
+                PIDVelY.kp = saved_kp[1] + 0.7f;
+                PIDVelZ.kp = saved_kp[2] + 0.7f;
+                // 水平速度环 Kp 增加 1，近地抗风更强
+                PIDPosX_Vel.kp = saved_posvel_kp[0] + 1.0f;
+                PIDPosY_Vel.kp = saved_posvel_kp[1] + 1.0f;
+                lock_thr = takeoff_base_thr + PIDVelH.out;
+                takeoff_base_thr = lock_thr;
+                PIDHeight.integ = 0.0f;
+                PIDVelH.integ   = 0.0f;
+                alt.target_height = world_data.pz;
+                step = 2;
+            }
+            break;
+
+        case 2:     // ---------- 阶段2: 2s油门衰减至0 + 近地锁降 ----------
+            decay_timer += dt;
+            takeoff_base_thr = lock_thr * (1.0f - decay_timer / 2.0f);
+            if (takeoff_base_thr < 0.0f) takeoff_base_thr = 0.0f;
+
+            // 冻结高度环，让高度环不反向修正
+            alt.target_height = world_data.pz;
+            PIDHeight.integ = 0.0f;
+            PIDVelH.integ   = 0.0f;
+
+            // 水平速度保持 (纯 Kp)
+            PID_Update(&PIDPosX_Vel, 0.0f, world_data.vx, dt);
+            PID_Update(&PIDPosY_Vel, 0.0f, world_data.vy, dt);
+            PIDRoll.target  = PIDPosX_Vel.out;
+            PIDPitch.target = PIDPosY_Vel.out;
+
+            stabilization(dt);
+
+            // 接地检测: |vz| < 0.1m/s 且 ToF 高度 < 0.2m → 锁桨
+            if (fabsf(world_data.vz) < 0.1f && of.height < 0.2f) {
+                ground_detect_cnt++;
+                if (ground_detect_cnt > 20) {   // 100ms 防抖
+                    out_flag = 0;
+                    flight_state = STATE_LOCK;
+                    step = 0;
+                }
+            } else {
+                ground_detect_cnt = 0;
+            }
+            break;
+    }
+}
 
 // pos_hold_control() 已移除 — 等价于 hover_lock() + stabilization(dt)
