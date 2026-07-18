@@ -410,6 +410,11 @@ void flight_control(float dt)
                 PIDYaw.target = eulerAngle.yaw;   // 锁当前真实物理偏航
             }
 
+            // 到达0.5m实际高度: 使能视觉追车位置环
+            if (!flag.pos_ctrl_enabled && world_data.pz >= 0.5f) {
+                flag.pos_ctrl_enabled = 1;
+            }
+
             // 到达目标高度: 结束起飞，进入正常飞行
             if (alt.target_height >= TAKEOFF_TARGET_HEIGHT) {
                 alt.target_height = TAKEOFF_TARGET_HEIGHT;

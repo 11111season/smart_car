@@ -27,7 +27,7 @@
 #define HEADING_FILTER_ALPHA     0.7f
 
 // 误差衰减系数 (每帧衰减比例, 0~1, 越小衰减越快)
-#define ERR_DECAY_FACTOR        0.85f
+#define ERR_DECAY_FACTOR        0.96f
 
 // ================= V形车标检测参数 =================
 #define CAR_MARK_MIN_AREA          20      // 车标候选最小面积

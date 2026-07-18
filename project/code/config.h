@@ -1,10 +1,10 @@
 // =============================================================================
-// config.h - 飞控配置文件 v3.1.0
+// config.h - 飞控配置文件 v6.1.0
 // =============================================================================
 #ifndef CONFIG_H_
 #define CONFIG_H_
 
-#define FIRMWARE_VERSION           "v6.0.0"
+#define FIRMWARE_VERSION           "v6.1.0"
 
 // =============================================================================
 // 功能模块开关 (1=启用, 0=禁用)
@@ -14,7 +14,7 @@
 #define POSITION_HOLD               (1)     // 0=禁用速度环(纯自稳), 1=视觉追车(位置+速度串级), 2=纯速度环悬停
 #define THROTTLE_ATTENUATION        (1)     // 油门衰减 (电池电压补偿)
 #define BASE_SPEED                  (1)     // 基础速度模式
-#define CAR_RETAIN_DECAY            (0.90f) // 小车丢失后坐标衰减系数 (~2s 衰减到0.5% @25Hz)
+#define CAR_RETAIN_DECAY            (0.978f) // 小车丢失后坐标衰减系数 (1s 衰减到33% @50Hz)
 
 // =============================================================================
 // 调试模式开关
@@ -63,13 +63,13 @@
 // ---------- 高度环PID积分/输出限幅 ----------
 #define HEIGHT_INTEG_LIMIT_HIGH     (150.0f)
 #define HEIGHT_INTEG_LIMIT_LOW      (-150.0f)
-#define HEIGHT_OUT_LIMIT_HIGH       (0.35f)
-#define HEIGHT_OUT_LIMIT_LOW        (-0.35f)
+#define HEIGHT_OUT_LIMIT_HIGH       (0.4f)
+#define HEIGHT_OUT_LIMIT_LOW        (-0.4f)
 
-#define VELH_INTEG_LIMIT_HIGH       (100.0f)
-#define VELH_INTEG_LIMIT_LOW        (-100.0f)
-#define VELH_OUT_LIMIT_HIGH         (600.0f)
-#define VELH_OUT_LIMIT_LOW          (-600.0f)
+#define VELH_INTEG_LIMIT_HIGH       (150.0f)
+#define VELH_INTEG_LIMIT_LOW        (-150.0f)
+#define VELH_OUT_LIMIT_HIGH         (700.0f)
+#define VELH_OUT_LIMIT_LOW          (-700.0f)
 
 // ---------- 位置环PID积分/输出限幅 ----------
 #define POS_INTEG_LIMIT_HIGH        (0.0f)
@@ -132,7 +132,7 @@
 // 角速度前馈 (保守值，减少角度环延迟)
 // 目标角度变化率 × 增益 → 直接加到角速度环目标
 // =============================================================================
-#define ANG_RATE_FF_GAIN            (0.021f)  // 角速度前馈增益 (0=关闭, 0.05=保守)         
+#define ANG_RATE_FF_GAIN            (0.030f)  // 角速度前馈增益 (0=关闭, 0.05=保守)         
 
 // =============================================================================
 // 高度环PID参数
@@ -193,7 +193,7 @@
 // =============================================================================
 // 起飞阶段控制配置
 // =============================================================================
-#define TAKEOFF_TARGET_HEIGHT       (1.3f)  // 起飞目标高度 (m)
+#define TAKEOFF_TARGET_HEIGHT       (1.35f)  // 起飞目标高度 (m)
 
 // =============================================================================
 // 自动降落配置
