@@ -23,7 +23,7 @@ void Init_all(void)
     qmc5883l_init();
     //定时器初始化
     //蓝牙初始化
-    HC06_Init(115200);
+    HC06_Init(1000000);
     pit_ms_init(PIT_CH0,10);//开启了10ms中断
     pit_ms_init(PIT_CH1,10);//开启了10ms中断
     pit_us_init(PIT_CH2, 1);//这样就代表定时器定时1us触发一次中断

@@ -36,11 +36,13 @@ void KeyTask_Handler(void)
     if(key_get_state(KEY_1) == KEY_SHORT_PRESS)
     {
         HC06_SendDroneCmd(1);
+        key_clear_state(KEY_1);
     }
 
     if(key_get_state(KEY_2) == KEY_SHORT_PRESS)
     {
         HC06_SendDroneCmd(2);
+        key_clear_state(KEY_2);
     }
 
     InertialNav_KeyHandler();
@@ -61,5 +63,6 @@ void KeyTask_Handler(void)
         target_vy  = 0.0f;
 
         HC06_SendDroneCmd(3);
+        key_clear_state(KEY_3);
     }
 }

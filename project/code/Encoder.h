@@ -3,7 +3,7 @@
 
 #include "zf_common_headfile.h"
 #include "motor.h"
-/*----------------------- 函数接口声明 --------------------------*/
+/*----------------------- 鍑芥暟鎺ュ彛澹版槑 --------------------------*/
 void Encoder_Init(void);
 void Encoder_Data_Get(void);
 

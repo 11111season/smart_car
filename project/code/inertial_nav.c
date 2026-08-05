@@ -13,6 +13,9 @@
 
 /*==================================================== 编译开关 ====================================================*/
 #define INAV_MODE  1   // 0=五信标链式循环  1=双航点巡逻
+#define WP3_ENABLE 0   // 1=启用硬编码第三航点  0=仅用录制航点
+#define WP3_X      1.0f // 硬编码航点X坐标(m)
+#define WP3_Y      0.0f // 硬编码航点Y坐标(m)
 
 /*==================================================== 编码器 ====================================================*/
 #define BCN_ENC_CALIB  4.30f
@@ -35,8 +38,12 @@ typedef struct { float x, y; } pt_t;
   #define BCN_MAX  5
   #define WP_MAX   (BCN_MAX + 1)   // 5信标 + 1中心
 #else
-  #define BCN_MAX  2               // 记录2个航点 (WP3硬编码, 不需记录)
-  #define WP_MAX   3               // 3个航点: WP1+WP2(录制) + WP3(0,0.5)
+  #define BCN_MAX  3                                  // 记录2个航点
+  #if WP3_ENABLE
+    #define WP_MAX 3                                   // 3个航点: 录制2个 + WP3硬编码
+  #else
+    #define WP_MAX (BCN_MAX)                           // 仅录制航点, 无硬编码
+  #endif
 #endif
 
 
@@ -52,7 +59,7 @@ static uint8_t wp_idx = 0;
 static pt_t    seg_start;
 
 #define POS_KP  1.0f    // 位置闭环P增益
-#define POS_MAX 0.17f   // 位置闭环最大速度(m/s)
+#define POS_MAX 0.30f   // 位置闭环最大速度(m/s)
 
 /*==================================================== 状态机 ====================================================*/
 enum { BCN_IDLE, BCN_RECORD, BCN_DONE, BCN_GO };
@@ -174,14 +181,20 @@ static void bcn_build_waypoints(void)
     for (int i = 0; i < BCN_MAX; i++) wp_abs[i] = bcn_abs[i];
     wp_abs[BCN_MAX] = bcn_center;
 #else
-    // 模式1: 双录制航点 + 硬编码WP3 (发车区正前方0.5m)
+    // 模式1: 录制航点 + 可选硬编码WP3
     wp_abs[0] = bcn_abs[0];
     wp_abs[1] = bcn_abs[1];
-    wp_abs[2].x = 0.5f; wp_abs[2].y = 0.0f;   // WP3: 发车区正前方0.5m
+#if WP3_ENABLE
+    wp_abs[2].x = WP3_X; wp_abs[2].y = WP3_Y;   // WP3: 发车区正前方0.5m
     printf("INAV: WP1(%.2f,%.2f) WP2(%.2f,%.2f) WP3(%.2f,%.2f)\n",
            wp_abs[0].x, wp_abs[0].y,
            wp_abs[1].x, wp_abs[1].y,
            wp_abs[2].x, wp_abs[2].y);
+#else
+    printf("INAV: WP1(%.2f,%.2f) WP2(%.2f,%.2f)\n",
+           wp_abs[0].x, wp_abs[0].y,
+           wp_abs[1].x, wp_abs[1].y);
+#endif
 #endif
 
     // 预计算每段距离和方向
@@ -203,6 +216,7 @@ static void bcn_start_cycle(void)
 {
     mission_armed = 1;
     mission_arm_time = time_us;     // 记录发车时刻, 等4s后执行
+    HC06_SendDroneCmd(4);           // 通知无人机: 小车已发车 #D$
     wp_idx = 0;
     bcn_state = BCN_GO;
     seg_start.x = 0.0f; seg_start.y = 0.0f;
@@ -244,10 +258,11 @@ void InertialNav_KeyHandler(void)
             }
 #else
             if (!mission_armed) {
-                // 2个航点已记录完毕, 武装任务, 等4s无人机就位后执行
+                // 2个航点已记录完毕, 武装任务, 等3.5s无人机就位后执行
                 mission_armed = 1;
                 mission_arm_time = time_us;
-                printf("INAV: Mission armed, waiting 4s for drone...\n");
+                HC06_SendDroneCmd(4);           // 通知无人机: 小车已发车 #D$
+                printf("INAV: Mission armed, waiting 3.5s for drone...\n");
                 angle_target = 0.0f;
                 target_vx = 0.0f; target_vy = 0.0f;
                 Motor_Enable_PID(1);
@@ -331,11 +346,12 @@ void InertialNav_KeyHandler(void)
 /*==================================================== 主循环更新 ====================================================*/
 void InertialNav_Update(void)
 {
+    if (race_done) return;   // 完赛: 不触发巡逻/导航
     if (bcn_debounce > 0) bcn_debounce--;
 
     // ---- 巡逻: flag=2 连续10帧才确认丢信标, 在3个航点间循环 ----
     // 触发条件: 已武装 + 丢信标确认 + 未在巡逻 + 消抖结束
-    if (mission_armed && time_us - mission_arm_time >= 4000000
+    if (mission_armed && time_us - mission_arm_time >= 3500000
         && flag2_count >= FLAG2_DEBOUNCE && !patrol_active && bcn_debounce == 0) {
         float d_min = 1e9f;
         for (int i = 0; i < WP_MAX; i++) {

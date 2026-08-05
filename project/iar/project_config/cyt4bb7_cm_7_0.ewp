@@ -2023,6 +2023,12 @@
         </file>
         <file>
             <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_imu660rb.h</name>
+        <file>
+            <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_imu660rc.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_imu660rc.h</name>
+        </file>
         </file>
         <file>
             <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_imu963ra.c</name>
@@ -2053,6 +2059,12 @@
         </file>
         <file>
             <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_key.h</name>
+        <file>
+            <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_lora3a22.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_lora3a22.h</name>
+        </file>
         </file>
         <file>
             <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_menc15a.c</name>
@@ -2065,6 +2077,12 @@
         </file>
         <file>
             <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_mt9v03x.h</name>
+        <file>
+            <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_pmw3901.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_pmw3901.h</name>
+        </file>
         </file>
         <file>
             <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_oled.c</name>
@@ -2095,6 +2113,12 @@
         </file>
         <file>
             <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_uart_receiver.h</name>
+        <file>
+            <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_upflow302.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_upflow302.h</name>
+        </file>
         </file>
         <file>
             <name>$PROJ_DIR$\..\..\..\libraries\zf_device\zf_device_wifi_spi.c</name>

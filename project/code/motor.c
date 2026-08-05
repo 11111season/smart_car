@@ -22,7 +22,7 @@
 #include "motor.h"
 
 /*==================================================== 全局变量 ====================================================*/
-
+#define POS_V_MAX 0.30f
 // 四个电机结构体实例
 motor_t motor_L1;       // 左前轮
 motor_t motor_L2;       // 左后轮
@@ -78,7 +78,7 @@ static PID pos_pid_x;      // X方向位置PID
 static PID pos_pid_y;      // Y方向位置PID
 
 /*==================================================== 防滑控制 ====================================================*/
-#define SLIP_DIFF_THRESH    70.0f     // 左右轮速差阈值 (脉冲/10ms)
+#define SLIP_DIFF_THRESH    60.0f     // 左右轮速差阈值 (脉冲/10ms)
 #define SLIP_COUNT_MAX      5         // 连续打滑判定次数
 #define ESCAPE_COMP_FACTOR  0.8f      // 脱困补偿系数
 
@@ -170,12 +170,12 @@ void Motor_Init(void)
 void PositionControl_Init(void)
 {
     PID_Init(&pos_pid_x, 0.01f, 0.0f, 0.0f);
-    PID_SetLimit(&pos_pid_x, 0.17f, -0.17f);            // 输出限幅: ±0.20 m/s
+    PID_SetLimit(&pos_pid_x, POS_V_MAX, -POS_V_MAX);            // 输出限幅: ±0.20 m/s
     PID_SetIntegralLimit(&pos_pid_x, 10.0f);
     PID_Enable(&pos_pid_x, 1);
 
     PID_Init(&pos_pid_y, 0.01f, 0.0f, 0.0f);
-    PID_SetLimit(&pos_pid_y, 0.17f, -0.17f);
+    PID_SetLimit(&pos_pid_y, POS_V_MAX, -POS_V_MAX);
     PID_SetIntegralLimit(&pos_pid_y, 10.0f);
     PID_Enable(&pos_pid_y, 1);
 }
@@ -196,8 +196,8 @@ void PositionControl_Update(void)
     float err_x = -GetPositionErrorX();
     float err_y = -GetPositionErrorY();
 
-    // 发车4s延迟: 等无人机飞到小车上方, 期间保持静止
-    if (!mission_armed || time_us - mission_arm_time < 4000000)
+    // 完赛/发车延迟: 立即锁住
+    if (race_done || !mission_armed || time_us - mission_arm_time < 3500000)
     {
         PID_Reset(&pos_pid_x);
         PID_Reset(&pos_pid_y);
@@ -641,8 +641,8 @@ void Motor_PID_Control_All(void)
     if (motor_L1.pid.Enable) {
         // 转速限幅: 钳位目标速度到 ±100 pulse/10ms
         target = (float)motor_L1.target_speed;
-        if (target >  150.0f) target =  150.0f;
-        if (target < -150.0f) target = -150.0f;
+        if (target >  180.0f) target =  180.0f;
+        if (target < -180.0f) target = -180.0f;
         PID_SetTarget(&motor_L1.pid, target);
 
         feedback    = PID_Calculate(&motor_L1.pid, (float)motor_L1.encoder_speed);
@@ -661,8 +661,8 @@ void Motor_PID_Control_All(void)
     // ---- 左后轮 (电机线反接: 正duty=倒退, 故输出取反) ----
     if (motor_L2.pid.Enable) {
         target = (float)motor_L2.target_speed;
-        if (target >  150.0f) target =  150.0f;
-        if (target < -150.0f) target = -150.0f;
+        if (target >  180.0f) target =  180.0f;
+        if (target < -180.0f) target = -180.0f;
         PID_SetTarget(&motor_L2.pid, target);
 
         feedback    = PID_Calculate(&motor_L2.pid, (float)motor_L2.encoder_speed);
@@ -678,8 +678,8 @@ void Motor_PID_Control_All(void)
     // ---- 右前轮 ----
     if (motor_R1.pid.Enable) {
         target = (float)motor_R1.target_speed;
-        if (target >  150.0f) target =  150.0f;
-        if (target < -150.0f) target = -150.0f;
+        if (target >  180.0f) target =  180.0f;
+        if (target < -180.0f) target = -180.0f;
         PID_SetTarget(&motor_R1.pid, target);
 
         feedback    = PID_Calculate(&motor_R1.pid, (float)motor_R1.encoder_speed);
@@ -697,8 +697,8 @@ void Motor_PID_Control_All(void)
     // ---- 右后轮 (电机线反接: 正duty=倒退, 故输出取反) ----
     if (motor_R2.pid.Enable) {
         target = (float)motor_R2.target_speed;
-        if (target >  150.0f) target =  150.0f;
-        if (target < -150.0f) target = -150.0f;
+        if (target >  180.0f) target =  180.0f;
+        if (target < -180.0f) target = -180.0f;
         PID_SetTarget(&motor_R2.pid, target);
 
         feedback    = PID_Calculate(&motor_R2.pid, (float)motor_R2.encoder_speed);

@@ -2,35 +2,35 @@
 #define CODE_PID_H_
 
 #include "zf_common_headfile.h"
-/*----------------------- ½á¹¹Ìå±äÁ¿ÉùÃ÷ --------------------------*/
+/*----------------------- ç»“æ„ä½“ç±»å‹å®šä¹‰ --------------------------*/
 typedef struct
 {
-    // ¿ØÖÆÆ÷²ÎÊı
+    // æ§åˆ¶å‚æ•°
     float Kp;
     float Ki;
     float Kd;
 
-    // Éè¶¨ÖµºÍ·´À¡Öµ
-    float Target;   // Ä¿±êÖµ (SP)
-    float FeedBack; // ·´À¡Öµ (FB)
+    // è®¾å®šå€¼å’Œåé¦ˆå€¼
+    float Target;   // ç›®æ ‡å€¼ (SP)
+    float FeedBack; // åé¦ˆå€¼ (FB)
 
-    // ÀúÊ·×´Ì¬£¨±ØĞëµÄ£©
-    float err_k_1;        // ÉÏ´ÎÎó²î err[k-1]
-    float err_int_k_1;    // ÉÏ´Î»ı·ÖÖµ err_int[k-1]
-    uint64_t t_k_1;       // ÉÏ´ÎÊ±¼ä t[k-1]
+    // å†å²çŠ¶æ€, ç”¨äºç¦»æ•£æ¨¡å‹
+    float err_k_1;        // ä¸Šæ¬¡è¯¯å·® err[k-1]
+    float err_int_k_1;    // ä¸Šæ¬¡ç§¯åˆ†å€¼ err_int[k-1]
+    uint64_t t_k_1;       // ä¸Šæ¬¡æ—¶é—´ t[k-1]
 
-    // Êä³öºÍÏŞ·ù
-    float Output;         // µ±Ç°Êä³ö
-    float UpperLimit;     // Êä³öÉÏÏŞ
-    float LowerLimit;     // Êä³öÏÂÏŞ
-    float IntegralMax;    // »ı·ÖÏŞ·ù
+    // è¾“å‡ºä¸é™å¹…
+    float Output;         // å½“å‰è¾“å‡º
+    float UpperLimit;     // è¾“å‡ºä¸Šé™
+    float LowerLimit;     // è¾“å‡ºä¸‹é™
+    float IntegralMax;    // ç§¯åˆ†é™å¹…
 
-    // Ê¹ÄÜ±êÖ¾
+    // ä½¿èƒ½æ ‡å¿—
     uint8_t Enable;
 } PID;
 
-/*----------------------- º¯Êı½Ó¿ÚÉùÃ÷ --------------------------*/
-// º¯ÊıÉùÃ÷
+/*----------------------- å‡½æ•°æ¥å£å£°æ˜ --------------------------*/
+// åˆå§‹åŒ–å‡½æ•°
 void PID_Init(PID *pid, float Kp, float Ki, float Kd);
 void PID_SetLimit(PID *pid, float Upper, float Lower);
 void PID_SetIntegralLimit(PID *pid, float IntegralMax);

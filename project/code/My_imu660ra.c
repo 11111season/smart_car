@@ -1,36 +1,36 @@
 #include "My_imu660ra.h"
 
-// �����˲�ϵ�������ݾ��������0.95��ʾ����������95%�����ٶȼ�5%��
+// 互补滤波系数: 数据经过0.95加权, 表示陀螺仪占95%, 加速度计占5%
 #define FILTER_COEFF 0.95f
-//�ⲿʱ�����
+// 外部时间基准
 extern volatile uint64_t time_us;
-//���ٶ�������
+// 加速度原始量
 static float imu660_ax,imu660_ay,imu660_az;
-//���ٶ�������
+// 角速度原始量
 float imu660_gx,imu660_gy,imu660_gz;
-// ��������ƫ����/s��
+// 三轴陀螺零偏 (°/s)
 static float gx_bias = 0.0f;
 static float gy_bias = 0.0f;
 static float gz_bias = 0.0f;
 float gyro_z_offset = 0.0f;     // Z轴在线零偏 (非static, ISR可读写), 限幅±2°/s
-// �Ƕȣ��ȣ�
+// 姿态角 (度)
 static float imu660_yaw = 0.0f;
 static float imu660_pitch = 0.0f;
 static float imu660_roll = 0.0f;
-// ȫ�ֱ���
-static float gyro_z_lpf = 0.0f;        // �˲����Z����ٶ�
+// 全局变量
+static float gyro_z_lpf = 0.0f;        // 滤波后的Z轴角速度
 static uint16_t still_cnt = 0;
-// �ϴθ���ʱ�䣨΢�룩
+// 上次更新时间 (微秒)
 static uint64_t last_time = 0;
 volatile uint8_t imu660ra_ready = 0;
 
 /*****************************************************************************
  * @name       : My_IMU660RA_Calibrate
  * @date       : 2026-03-10
- * @function   : imu660raУ׼����
- * @parameters : ��
- * @retvalue   : ��
- * @note       : ��
+ * @function   : imu660ra校准函数
+ * @parameters : 无
+ * @retvalue   : 无
+ * @note       : 无
 ******************************************************************************/
 void My_IMU660RA_Calibrate(void)
 {
@@ -40,7 +40,7 @@ void My_IMU660RA_Calibrate(void)
 
     for (i = 0; i < samples; i++)
     {
-        // ��ȡ������ԭʼ���ݲ�ת��Ϊ������
+        // 读取陀螺原始数据并转换为角速度
         imu660ra_get_gyro();
         sum_gx += imu660ra_gyro_transition(imu660ra_gyro_x);
         sum_gy += imu660ra_gyro_transition(imu660ra_gyro_y);
@@ -56,10 +56,10 @@ void My_IMU660RA_Calibrate(void)
 /*****************************************************************************
  * @name       : My_Imu660ra_Init
  * @date       : 2026-03-10
- * @function   : �����Լ���imu660ra��ʼ������
- * @parameters : ��
- * @retvalue   : ����ֵΪ0��1��1��ʼ��ʧ�ܣ�0��ʼ���ɹ�
- * @note       : ��
+ * @function   : 封装imu660ra初始化函数
+ * @parameters : 无
+ * @retvalue   : 返回值为0或1, 1初始化失败, 0初始化成功
+ * @note       : 无
 ******************************************************************************/
 uint8_t My_Imu660ra_Init(void)
 {
@@ -70,14 +70,14 @@ uint8_t My_Imu660ra_Init(void)
         return ret;
   }
     system_delay_ms(500);
-    My_IMU660RA_Calibrate();   // �������� delay������ʼ���׶���������
+    My_IMU660RA_Calibrate();   // 若开机会 delay, 初始化阶段无需重复校准
     last_time = time_us;
-    // ���ýǶ�
+    // 设置角度
     imu660_yaw = 0.0f;
     imu660_pitch = 0.0f;
     imu660_roll = 0.0f;
 
-    imu660ra_ready = 1;        // У׼��ɣ���������
+    imu660ra_ready = 1;        // 校准完成, 初始化成功
     printf("IMU660RA ready\n");
     return 0;
 }
@@ -85,37 +85,37 @@ uint8_t My_Imu660ra_Init(void)
 /*****************************************************************************
  * @name       : My_Imu660ra_Update
  * @date       : 2026-03-10
- * @function   : imu660ra�������ݺ���
- * @parameters : ��
- * @retvalue   : ��
- * @note       : ��
+ * @function   : imu660ra数据更新函数
+ * @parameters : 无
+ * @retvalue   : 无
+ * @note       : 无
 ******************************************************************************/
 void My_Imu660ra_Update(void)
 {
     uint64_t now = time_us;
-    float dt = (now - last_time) * 1e-6f;    // ΢��ת��
-    if (dt <= 0.0f || dt > 0.1f) dt = 0.01f; // ���������100ms
+    float dt = (now - last_time) * 1e-6f;    // 微秒转秒
+    if (dt <= 0.0f || dt > 0.1f) dt = 0.01f; // 限制采样间隔不超过100ms
 
-    // �ر��жϣ����� I2C ʱ������ I2C ���ж����У�
+    // 关闭中断, 防止 I2C 时序被打断导致 I2C 数据出错
     interrupt_global_disable();
 
-    // ��ȡ����ԭʼ����
+    // 读取陀螺原始数据
     imu660ra_get_acc();
     imu660ra_get_gyro();
 
-    interrupt_global_enable(0);               // ���¿����ж�
+    interrupt_global_enable(0);               // 重新开启中断
 
-    // ת��Ϊ��������������Ϊ���ǵ�imu660ra�İ�װ�����Ǻ�֮ǰ�����ǵ����෴�ģ��������ǽ���ȡ��
+    // 转换为加速度值, 因为我们的imu660ra的安装方式是和之前正相反, 所以这里我们取负值
     imu660_ax = imu660ra_acc_transition(imu660ra_acc_x);
     imu660_ay = imu660ra_acc_transition(imu660ra_acc_y);
     imu660_az = -imu660ra_acc_transition(imu660ra_acc_z);
 
-    // �����Ǽ�ȥ��ƫ
+    // 角速度减去零偏
     imu660_gx = imu660ra_gyro_transition(imu660ra_gyro_x) - gx_bias;
     imu660_gy = imu660ra_gyro_transition(imu660ra_gyro_y) - gy_bias;
     imu660_gz = imu660ra_gyro_transition(imu660ra_gyro_z) - gz_bias;
 
-    // ��ͨ�˲���ϵ��0.1���ɸ��ݲ������ڵ�����
+    // 低通滤波系数0.1, 可根据采样周期进行调整
     gyro_z_lpf = 0.9f * gyro_z_lpf + 0.1f * imu660_gz;
 
     // 静止检测: 三轴角速度均 < 0.2°/s 且持续 15 周期 (0.15s), 学习陀螺零偏
@@ -139,32 +139,32 @@ void My_Imu660ra_Update(void)
     // 扣除在线零偏后的角速度
     float gz_corrected = imu660_gz - gyro_z_offset;
 
-    // --- �����ǻ��ֵõ��Ƕ����� ---
+    // --- 陀螺仪积分得到的角度值 ---
     float imu660_yaw_g   = imu660_yaw   + gz_corrected * dt;
-    float imu660_pitch_g = imu660_pitch + imu660_gx * dt;          // ���Ÿ���ʵ���ᶨ�����
-    float imu660_roll_g  = imu660_roll  - imu660_gy * dt;          // ƽ�⳵���÷���
+    float imu660_pitch_g = imu660_pitch + imu660_gx * dt;          // 俯仰根据实际轴定义调整
+    float imu660_roll_g  = imu660_roll  - imu660_gy * dt;          // 平衡车方向使用方式
 
-    // --- �ɼ��ٶȼ��㸩���ͺ���ǣ�����ģ����ƾ�ֹ�������˶�ʱ���ţ�---
-    float imu660_pitch_a = imu660_pitch_g;  // Ĭ�ϱ���ԭֵ
+    // --- 由加速度计算俯仰和横滚角, 用于修正静止状态或缓速运动时的漂移 ---
+    float imu660_pitch_a = imu660_pitch_g;  // 默认保持原值
     float imu660_roll_a  = imu660_roll_g;
     float norm = sqrtf(imu660_ax*imu660_ax + imu660_ay*imu660_ay + imu660_az*imu660_az);
     if (norm > 0.8f && norm < 1.2f)
-    {   // �����жϼ��ٶȷ�ֵ�ӽ�1g����Ϊ�˶�������
-        // ���ݼ��ٶȼƼ���Ƕȣ����������MPU6050��ͬ�Ĺ�ʽ
-        // ע�⣺IMU660RA�����������MPU6050��ͬ����������෴���������
-        imu660_pitch_a = atan2f(-imu660_ax, sqrtf(imu660_ay*imu660_ay + imu660_az*imu660_az)) * 57.29578f;  // ����ת��
+    {   // 通过判断加速度幅值接近1g, 认为是缓速运动状态
+        // 根据加速度计计算角度, 使用与MPU6050相同的公式
+        // 注意: IMU660RA加速度轴与MPU6050不同, 需要取反修正
+        imu660_pitch_a = atan2f(-imu660_ax, sqrtf(imu660_ay*imu660_ay + imu660_az*imu660_az)) * 57.29578f;  // 角度转换
         imu660_roll_a  = atan2f(imu660_ay, imu660_az) * 57.29578f;
     }
 
-    // --- �����˲��ں� ---
+    // --- 互补滤波融合 ---
     imu660_pitch = FILTER_COEFF * imu660_pitch_g + (1 - FILTER_COEFF) * imu660_pitch_a;
     imu660_roll  = FILTER_COEFF * imu660_roll_g  + (1 - FILTER_COEFF) * imu660_roll_a;
-    imu660_yaw   = imu660_yaw_g;   // ƫ�����޷��ü��ٶ�������ֱ�ӻ���
+    imu660_yaw   = imu660_yaw_g;   // 偏航角无法用加速度计修正, 直接积分
 
-    // ���Ƕ������� [-180, 180]
+    // 将角度限制在 [-180, 180]
     if (imu660_yaw > 180.0f)   imu660_yaw -= 360.0f;
     if (imu660_yaw < -180.0f)  imu660_yaw += 360.0f;
-    
+
     //imu660_yaw = -imu660_yaw;
 
     last_time = now;

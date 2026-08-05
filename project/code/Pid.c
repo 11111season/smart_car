@@ -1,15 +1,15 @@
 #include "Pid.h"
 
-// Íâ²¿Ê±¼ä±äÁ¿ÉùÃ÷
+// å¤–éƒ¨æ—¶é—´åŸºå‡†
 extern volatile uint64_t time_us;
 
 /*****************************************************************************
  * @name       : PID_Init
  * @date       : 2026-03-10
- * @function   : PIDµÄ³õÊ¼»¯º¯Êı
- * @parameters : ´«ÈëKp,Ki,Kd
- * @retvalue   : ÎŞ
- * @note       : ÎŞ
+ * @function   : PIDçš„åˆå§‹åŒ–å‡½æ•°
+ * @parameters : å‚æ•°Kp,Ki,Kd
+ * @retvalue   : æ— 
+ * @note       : æ— 
 ******************************************************************************/
 void PID_Init(PID *pid, float Kp, float Ki, float Kd)
 {
@@ -20,15 +20,15 @@ void PID_Init(PID *pid, float Kp, float Ki, float Kd)
     pid->Target = 0.0f;
     pid->FeedBack = 0.0f;
 
-    // ÀúÊ·×´Ì¬³õÊ¼»¯
+    // å†å²çŠ¶æ€åˆå§‹åŒ–
     pid->err_k_1 = 0.0f;
     pid->err_int_k_1 = 0.0f;
     pid->t_k_1 = 0;
 
-    // Êä³ö³õÊ¼»¯
+    // è¾“å‡ºåˆå§‹åŒ–
     pid->Output = 0.0f;
 
-    // Ä¬ÈÏÏŞ·ù£¨ºóĞø¿ÉĞŞ¸Ä£©
+    // é»˜è®¤é™å¹…, å¯è‡ªè¡Œä¿®æ”¹
     pid->UpperLimit = 1800.0f;
     pid->LowerLimit = -1800.0f;
     pid->IntegralMax = 800.0f;
@@ -39,10 +39,10 @@ void PID_Init(PID *pid, float Kp, float Ki, float Kd)
 /*****************************************************************************
  * @name       : PID_SetLimit
  * @date       : 2026-03-10
- * @function   : PIDµÄÏŞ·ùº¯Êı
- * @parameters : ´«ÈëPID½á¹¹Ìå£¬ÉÏÏŞÒÔ¼°ÏÂÏŞ
- * @retvalue   : ÎŞ
- * @note       : ÎŞ
+ * @function   : PIDè¾“å‡ºé™å¹…å‡½æ•°
+ * @parameters : å‚æ•°PIDç»“æ„ä½“, ä¸Šä¸‹é™ä»¥åŠç§¯åˆ†é™
+ * @retvalue   : æ— 
+ * @note       : æ— 
 ******************************************************************************/
 void PID_SetLimit(PID *pid, float Upper, float Lower)
 {
@@ -54,10 +54,10 @@ void PID_SetLimit(PID *pid, float Upper, float Lower)
 /*****************************************************************************
  * @name       : PID_SetIntegralLimit
  * @date       : 2026-03-10
- * @function   : PIDµÄ»ı·ÖÏŞ·ùº¯Êı
- * @parameters : ´«ÈëPID½á¹¹Ìå£¬»ı·ÖÉÏÏŞ
- * @retvalue   : ÎŞ
- * @note       : ÎŞ
+ * @function   : PIDçš„ç§¯åˆ†é™å¹…å‡½æ•°
+ * @parameters : å‚æ•°PIDç»“æ„ä½“, ç§¯åˆ†é™å¹…
+ * @retvalue   : æ— 
+ * @note       : æ— 
 ******************************************************************************/
 void PID_SetIntegralLimit(PID *pid, float IntegralMax)
 {
@@ -67,10 +67,10 @@ void PID_SetIntegralLimit(PID *pid, float IntegralMax)
 /*****************************************************************************
  * @name       : PID_SetTarget
  * @date       : 2026-03-10
- * @function   : PIDµÄÉèÖÃÄ¿±êÖµº¯Êı
- * @parameters : ´«ÈëPID½á¹¹Ìå£¬Ä¿±êÖµ
- * @retvalue   : ÎŞ
- * @note       : ÎŞ
+ * @function   : PIDè®¾ç½®ç›®æ ‡å€¼å‡½æ•°
+ * @parameters : å‚æ•°PIDç»“æ„ä½“, ç›®æ ‡å€¼
+ * @retvalue   : æ— 
+ * @note       : æ— 
 ******************************************************************************/
 void PID_SetTarget(PID *pid, float target)
 {
@@ -80,10 +80,10 @@ void PID_SetTarget(PID *pid, float target)
 /*****************************************************************************
  * @name       : PID_Enable
  * @date       : 2026-03-10
- * @function   : PIDµÄÊ¹ÄÜº¯Êı
- * @parameters : ´«ÈëPID½á¹¹Ìå£¬Ê¹ÄÜ/¹Ø±Õ
- * @retvalue   : ÎŞ
- * @note       : ÎŞ
+ * @function   : PIDä½¿èƒ½å‡½æ•°
+ * @parameters : å‚æ•°PIDç»“æ„ä½“, ä½¿èƒ½/å…³é—­
+ * @retvalue   : æ— 
+ * @note       : æ— 
 ******************************************************************************/
 void PID_Enable(PID *pid, uint8_t enable)
 {
@@ -96,10 +96,10 @@ void PID_Enable(PID *pid, uint8_t enable)
 /*****************************************************************************
  * @name       : PID_Calculate
  * @date       : 2026-03-10
- * @function   : PIDµÄ¼ÆËãº¯Êı
- * @parameters : ´«ÈëPID½á¹¹Ìå£¬·´À¡Öµ
- * @retvalue   : Êä³öPID¿ØÖÆÁ¿£¨pwm£©
- * @note       : ÎŞ
+ * @function   : PIDçš„è®¡ç®—å‡½æ•°
+ * @parameters : å‚æ•°PIDç»“æ„ä½“, åé¦ˆå€¼
+ * @retvalue   : è®¡ç®—PIDè¾“å‡ºçš„pwmå€¼
+ * @note       : æ— 
 ******************************************************************************/
 float PID_Calculate(PID *pid, float FeedBack)
 {
@@ -109,39 +109,39 @@ float PID_Calculate(PID *pid, float FeedBack)
 
     pid->FeedBack = FeedBack;
 
-    // 1. ¼ÆËãµ±Ç°Îó²î
+    // 1. è®¡ç®—å½“å‰è¯¯å·®
     float err = pid->Target - pid->FeedBack;
 
-    // 2. »ñÈ¡Ê±¼ä¼ä¸ô£¨Ãë£©
+    // 2. è·å–æ—¶é—´ï¼ˆå¾®ç§’ï¼‰
     uint64_t t_k = time_us;
     float deltaT = (pid->t_k_1 == 0) ? 0.01f : (t_k - pid->t_k_1) * 1e-6f;
 
-    // ·ÀÖ¹Ê±¼ä¼ä¸ôÒì³£
+    // é˜²æ­¢æ—¶é—´å·®å¼‚å¸¸
     if (deltaT <= 0 || deltaT > 0.1f) {
-        deltaT = 0.01f;  // Ä¬ÈÏ10ms
+        deltaT = 0.01f;  // é»˜è®¤10ms
     }
 
-    // 3. ¼ÆËã¸÷ÏîÊä³ö
-    float COp = 0.0f;  // ±ÈÀıÏîÊä³ö
-    float COi = 0.0f;  // »ı·ÖÏîÊä³ö
-    float COd = 0.0f;  // Î¢·ÖÏîÊä³ö
+    // 3. è®¡ç®—å„ä¸ªåˆ†é‡
+    float COp = 0.0f;  // æ¯”ä¾‹è¾“å‡ºé‡
+    float COi = 0.0f;  // ç§¯åˆ†è¾“å‡ºé‡
+    float COd = 0.0f;  // å¾®åˆ†è¾“å‡ºé‡
 
-    // 3.1 ±ÈÀıÏî
+    // 3.1 æ¯”ä¾‹é‡
     COp = pid->Kp * err;
 
-    // 3.2 »ı·ÖÏî£¨ÌİĞÎ»ı·Ö£©
-    float err_int = pid->err_int_k_1;  // ´ÓÉÏ´Î»ı·ÖÖµ¿ªÊ¼
+    // 3.2 ç§¯åˆ†é‡ï¼ˆæ¢¯å½¢ç§¯åˆ†ï¼‰
+    float err_int = pid->err_int_k_1;  // ä»ä¸Šæ¬¡ç§¯åˆ†å€¼å¼€å§‹
 
-    if (pid->t_k_1 != 0) {  // ²»ÊÇµÚÒ»´ÎÔËĞĞ
-        // ÌİĞÎ»ı·Ö£ºÃæ»ı = (ÉÏµ×+ÏÂµ×) ¡Á ¸ß ¡Â 2
+    if (pid->t_k_1 != 0) {  // ä¸æ˜¯ç¬¬ä¸€æ¬¡è®¡ç®—
+        // æ¢¯å½¢ç§¯åˆ†, é¢ç§¯ = (ä¸Šåº•+ä¸‹åº•) Ã— é«˜ Ã· 2
         float trapezoidal_area = (err + pid->err_k_1) * deltaT * 0.5f;
         err_int += trapezoidal_area;
     } else {
-        // µÚÒ»´ÎÔËĞĞ£¬Ê¹ÓÃ¾ØĞÎ»ı·Ö
+        // ç¬¬ä¸€æ¬¡è¿ç®—, ä½¿ç”¨çŸ©å½¢ç§¯åˆ†
         err_int += err * deltaT;
     }
 
-    // »ı·ÖÏŞ·ù£¨¿¹±¥ºÍ£©
+    // ç§¯åˆ†é™å¹…, é˜²æ­¢ç§¯åˆ†é¥±å’Œ
     if (err_int > pid->IntegralMax) {
         err_int = pid->IntegralMax;
     }
@@ -151,16 +151,16 @@ float PID_Calculate(PID *pid, float FeedBack)
 
     COi = pid->Ki * err_int;
 
-    // 3.3 Î¢·ÖÏî
+    // 3.3 å¾®åˆ†é¡¹
     if (pid->t_k_1 != 0 && deltaT > 1e-6f) {
-        // ±ê×¼Î¢·Ö£ºĞ±ÂÊ = ¦¤err / ¦¤t
+        // æ ‡å‡†å¾®åˆ†, æ–œç‡ = Î”err / Î”t
         COd = pid->Kd * (err - pid->err_k_1) / deltaT;
     }
 
-    // 4. ¼ÆËã×ÜÊä³ö
+    // 4. æ€»è¾“å‡ºé‡
     float CO = COp + COi + COd;
 
-    // 5. Êä³öÏŞ·ù
+    // 5. è¾“å‡ºé™å¹…
     if (CO > pid->UpperLimit) {
         CO = pid->UpperLimit;
     }
@@ -168,11 +168,11 @@ float PID_Calculate(PID *pid, float FeedBack)
         CO = pid->LowerLimit;
     }
 
-    // 6. ¸üĞÂÀúÊ·×´Ì¬
-    pid->err_k_1 = err;          // ±£´æµ±Ç°Îó²î£¬ÏÂ´Î×÷Îªerr[k-1]
-    pid->err_int_k_1 = err_int;  // ±£´æµ±Ç°»ı·ÖÖµ
-    pid->t_k_1 = t_k;            // ±£´æµ±Ç°Ê±¼ä
-    pid->Output = CO;            // ±£´æÊä³öÖµ
+    // 6. æ›´æ–°å†å²çŠ¶æ€
+    pid->err_k_1 = err;          // ä¿å­˜å½“å‰è¯¯å·®, ä¸‹æ¬¡è¿ç®—ä¸ºerr[k-1]
+    pid->err_int_k_1 = err_int;  // ä¿å­˜å½“å‰ç§¯åˆ†å€¼
+    pid->t_k_1 = t_k;            // ä¿å­˜å½“å‰æ—¶é—´
+    pid->Output = CO;            // ä¿å­˜è¾“å‡ºå€¼
 
     return CO;
 }
@@ -180,10 +180,10 @@ float PID_Calculate(PID *pid, float FeedBack)
 /*****************************************************************************
  * @name       : PID_Reset
  * @date       : 2026-03-10
- * @function   : PIDµÄ¸´Î»º¯Êı
- * @parameters : ´«ÈëPID½á¹¹Ìå
- * @retvalue   : ÎŞ
- * @note       : ÎŞ
+ * @function   : PIDçš„å¤ä½å‡½æ•°
+ * @parameters : å‚æ•°PIDç»“æ„ä½“
+ * @retvalue   : æ— 
+ * @note       : æ— 
 ******************************************************************************/
 void PID_Reset(PID *pid)
 {

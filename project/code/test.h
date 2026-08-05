@@ -6,19 +6,31 @@
 #include "My_imu660ra.h"
 #include "QMC5883L.h"
 
-/*----------------------- �ⲿ�������� -----------------------*/
+/*----------------------- 外部变量声明 -----------------------*/
 extern volatile int count;
 extern int change_flag;
 extern volatile uint64_t time;
 extern volatile int Start_Pid_Flag;
 extern volatile int Stop_Pid_Flag;
 extern volatile uint64_t time_us;
-/*----------------------- �����ӿ����� -----------------------*/
+/*----------------------- 函数接口声明 -----------------------*/
 void Angle_Test(float vx,float vy);
 void Square_Test(float speed_mps, uint32_t duration_ms);
 void Figure8_Test(float speed_mps, uint32_t duration_ms);
 void IMU660RA_Test(void);
 void My_IMU660RA_Test(void);
 void Mag_Test(void);     // 磁力计 vs 陀螺仪yaw对比打印
+
+// 闭环正方形测试
+void Square_ClosedLoop_Init(void);   // 一次调用, 初始化状态机和PID
+void Square_ClosedLoop_Update(void); // 在10ms ISR中调用, 状态机分步执行
+
+// 闭环八字测试
+void Figure8_ClosedLoop_Init(void);
+void Figure8_ClosedLoop_Update(void);
+
+// 闭环圆形测试
+void Circle_ClosedLoop_Init(float radius_m, int dir);   // dir: 1=逆时针, -1=顺时针
+void Circle_ClosedLoop_Update(void);
 
 #endif /* CODE_TEST_H_ */
