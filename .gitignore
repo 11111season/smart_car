@@ -22,3 +22,8 @@ project/iar/settings/
 *.user
 .DS_Store
 Thumbs.db
+
+# 磁力计校准本地工具与测试数据 (不入库, 保留在本地)
+project/code/mag_*.py
+project/code/mag_*.txt
+project/code/mag_*.csv

@@ -15,6 +15,7 @@
 #include "My_imu660ra.h"
 #include "HC06_Driver.h"
 #include "inertial_nav.h"
+#include "QMC5883L.h"
 
 static uint8_t pid_started = 0;
 
@@ -24,7 +25,7 @@ void KeyTask_Init(void)
     PID_Reset(&angle_pid_yaw);   PID_Enable(&angle_pid_yaw, 1);
     PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
     My_Imu660ra_ResetYaw();
-    MagYaw_Reset();                      // 磁力计零点 = 当前车头方向
+    //MagYaw_Reset();                      // 磁力计零点 (2026-08-07: 磁力计暂关, 用陀螺仪+零漂)
     angle_target = 0.0f;
     target_vx  = 0.0f;
     target_vy  = 0.0f;
@@ -45,7 +46,17 @@ void KeyTask_Handler(void)
         key_clear_state(KEY_2);
     }
 
+#if MAG_CALIB_MODE && MAG_CALIB_MOTOR_TEST == 1
+    // 电机磁场干扰测试: KEY4 开始/停止 PWM缓变
+    qmc5883l_motor_test_key_handler();
+#elif MAG_CALIB_MODE && MAG_CALIB_MOTOR_TEST == 2
+    // 航向验证模式: KEY4 无特殊功能
+#elif MAG_CALIB_MODE
+    // 校准模式: KEY4 开始/结束磁力计采集 (慢速自转≥2圈)
+    qmc5883l_calibration_key_handler();
+#else
     InertialNav_KeyHandler();
+#endif
 
     if(key_get_state(KEY_3) == KEY_SHORT_PRESS)
     {

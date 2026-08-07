@@ -38,7 +38,7 @@ typedef struct { float x, y; } pt_t;
   #define BCN_MAX  5
   #define WP_MAX   (BCN_MAX + 1)   // 5信标 + 1中心
 #else
-  #define BCN_MAX  3                                  // 记录2个航点
+  #define BCN_MAX  2                                  // 记录2个航点
   #if WP3_ENABLE
     #define WP_MAX 3                                   // 3个航点: 录制2个 + WP3硬编码
   #else
@@ -101,22 +101,66 @@ void MagYaw_Update(void)
 {
     static float fy = 0.0f;
     static uint8_t init = 0;
+    static uint8_t skip_cnt = 0;
 
     float gz = imu660_gz;
     fy += gz * 0.01f;
 
-    qmc5883l_get_all();
-    float mag = qmc5883l_heading;
+    // 磁力计每20ms读一次 (QMC5883L 100Hz采样 + 512过采样, 10ms读可能读到新旧混合)
+    // 融合计算仍每10ms执行, 磁力计修正隔帧更新
+    skip_cnt++;
+    if (skip_cnt >= 2) {
+        skip_cnt = 0;
+        qmc5883l_get_all();
+        float mag = qmc5883l_heading;
 
-    if (!init) { fy = mag; init = 1; }
+        if (!init) { fy = mag; init = 1; }
 
-    float diff = mag - fy;
-    while (diff >  180.0f) diff -= 360.0f;
-    while (diff < -180.0f) diff += 360.0f;
-    fy += diff * 0.005f;
+        // 磁力计跳变保护: 相邻采样角差超过阈值视为异常尖峰
+        // 用±180环绕后的最短角差, 区分过零(359→1的diff=2)与尖峰(57→6的diff=-50)
+        // 连续 MAG_SPIKE_ACCEPT 次异常才信任新值(防真实快速转动被误杀)
+        static float mag_prev = -1.0f;
+        static uint8_t mag_spike_cnt = 0;
+        #define MAG_SPIKE_THRESH   20.0f
+        #define MAG_SPIKE_ACCEPT   3
+        if (mag_prev >= 0.0f) {
+            float d = mag - mag_prev;
+            while (d >  180.0f) d -= 360.0f;
+            while (d < -180.0f) d += 360.0f;
+            if (fabsf(d) > MAG_SPIKE_THRESH) {
+                if (mag_spike_cnt < MAG_SPIKE_ACCEPT) {
+                    mag_spike_cnt++;
+                    mag = mag_prev;   // 异常: 用上一次值
+                } else {
+                    mag_spike_cnt = 0;  // 连续多次异常: 信任新值(可能真在快速转)
+                }
+            } else {
+                mag_spike_cnt = 0;
+            }
+        }
+        mag_prev = mag;
 
-    while (fy >  360.0f) fy -= 360.0f;
-    while (fy <    0.0f) fy += 360.0f;
+        float diff = mag - fy;
+        while (diff >  180.0f) diff -= 360.0f;
+        while (diff < -180.0f) diff += 360.0f;
+
+        // ---- 磁力计权重门控: 电机运动时磁力计被严重干扰 ----
+        // 实测(遥控运动): 电机转时Y摆动±180°, 融合被拖偏30°+ → 运动时必须关磁力计
+        // 静止时Y稳定(±2°), 磁力计恢复校正锚定绝对航向
+        // 阈值单位: 编码器脉冲/10ms, 4轮求和 (静止噪声<8, 0.05m/s约90/轮)
+        #define MAG_GATE_ON   25
+        #define MAG_GATE_OFF  8
+        static float mag_w = 0.005f;   // 带滞回: 防速度在边界抖动时权重来回跳
+        float spd = fabsf(motor_L1.encoder_speed) + fabsf(motor_L2.encoder_speed)
+                  + fabsf(motor_R1.encoder_speed) + fabsf(motor_R2.encoder_speed);
+        if      (spd > MAG_GATE_ON)        mag_w = 0.0f;    // 运动: 关磁力计
+        else if (spd < MAG_GATE_OFF)       mag_w = 0.005f;  // 静止: 开磁力计
+        // 中间带: 保持上次状态
+        fy += diff * mag_w;
+
+        while (fy >  360.0f) fy -= 360.0f;
+        while (fy <    0.0f) fy += 360.0f;
+    }
 
     // 减零点偏移 → 相对角度
     fused_yaw = fy - mag_offset;
@@ -228,7 +272,7 @@ static void bcn_start_cycle(void)
     PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
     g_pos_x = 0.0f; g_pos_y = 0.0f;
     My_Imu660ra_ResetYaw();
-    MagYaw_Reset();
+    //MagYaw_Reset();   // 2026-08-07: 磁力计融合暂关, 用陀螺仪+零漂
 
     bcn_enc0[0] = motor_L1.total_encoder;
     bcn_enc0[1] = motor_L2.total_encoder;
@@ -271,7 +315,7 @@ void InertialNav_KeyHandler(void)
                 g_pos_x = 0.0f; g_pos_y = 0.0f;
                 go_center = 0;
                 My_Imu660ra_ResetYaw();
-                MagYaw_Reset();
+                //MagYaw_Reset();   // 2026-08-07: 磁力计融合暂关, 用陀螺仪+零漂
                 bcn_debounce = 80;
                 printf("INAV: Mission armed, waiting for drone flag...\n");
             }

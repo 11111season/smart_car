@@ -14,6 +14,9 @@
 
 #include "zf_common_headfile.h"
 #include "QMC5883L.h"
+#include "motor.h"          // Motor_SetSpeed, motor_L1..R2
+#include "My_imu660ra.h"    // My_Imu660ra_GetYaw
+#include "inertial_nav.h"   // fused_yaw
 
 // ====================================================全局变量定义====================================================
 // 定义全局变量
@@ -25,6 +28,7 @@ float qmc5883l_mag_y_gauss = 0.0f; // Y轴磁场强度（高斯）
 float qmc5883l_mag_z_gauss = 0.0f; // Z轴磁场强度（高斯）
 float qmc5883l_temperature = 0.0f; // 温度值（℃）
 float qmc5883l_heading = 0.0f;     // 航向角（度，0-360）
+uint32_t qmc5883l_mag_reject_cnt = 0;  // 错位读被拒次数 (调试用)
 
 // ====================================================内部变量====================================================
 static soft_iic_info_struct qmc5883l_iic_struct;  // 软件IIC对象
@@ -132,26 +136,64 @@ static uint8 qmc5883l_check_drdy(void)
 void qmc5883l_get_mag(void)
 {
     uint8 dat[6];
-    
+    int16 mx, my, mz;
+    // 上次有效值 (错位读校验用)
+    static int16 prev_mx = 0, prev_my = 0, prev_mz = 0;
+    static uint8 mag_valid_init = 0;   // 基线已建立(首读合理后置1)
+
     // 等待数据就绪
 //    while(!qmc5883l_check_drdy())
 //    {
 //        system_delay_ms(1);
 //    }
-    
+
+    // 软件I2C时序敏感: 关闭中断防止位时序被打断(否则读到错位字节→跳变)
+    // 与IMU(My_imu660ra.c)同样的保护方式
+    interrupt_global_disable();
+
     // 读取6个字节的磁场数据
     qmc5883l_read_registers(QMC5883L_REG_DATA_X_LSB, dat, 6);
-    
+
+    interrupt_global_enable(0);
+
     // 组合原始数据
-    qmc5883l_mag_x = (int16)(((uint16)dat[1] << 8) | dat[0]);
-    qmc5883l_mag_y = (int16)(((uint16)dat[3] << 8) | dat[2]);
-    qmc5883l_mag_z = (int16)(((uint16)dat[5] << 8) | dat[4]);
-    
+    mx = (int16)(((uint16)dat[1] << 8) | dat[0]);
+    my = (int16)(((uint16)dat[3] << 8) | dat[2]);
+    mz = (int16)(((uint16)dat[5] << 8) | dat[4]);
+
+    // ---- 错位读校验: 中心化幅度校验 (唯一判据) ----
+    // 去硬铁中心后磁场幅度应≈3450counts(2G实测, 磁力计绕Z转物理约束)
+    // 错位读垃圾值(0/265/2558/±32512)去偏后幅度≥9000 → 必判垃圾
+    // 真实持续偏移(如带载大电流)幅度仍落在窗口内 → 不会误拦
+    // 首读(0,0)幅度24535 → 判垃圾不立基线 → 修复之前被污染卡死bug
+    float cxm = (float)mx - QMC5883L_HARD_IRON_X;
+    float cym = (float)my - QMC5883L_HARD_IRON_Y;
+    float mag2 = cxm*cxm + cym*cym;
+    if ((mag2 > QMC5883L_MAG_MIN_ABS2) && (mag2 < QMC5883L_MAG_MAX_ABS2)) {
+        // 合理读数: 更新基线 (首读合理即立基线)
+        prev_mx = mx;
+        prev_my = my;
+        prev_mz = mz;
+        mag_valid_init = 1;
+    } else if (mag_valid_init) {
+        // 垃圾读数: 沿用上次有效值 (不更新基线)
+        mx = prev_mx;
+        my = prev_my;
+        mz = prev_mz;
+        qmc5883l_mag_reject_cnt++;
+    }
+    // 首读即垃圾(罕见): 不立基线, 输出本帧, 下一帧合理即可恢复
+
+    // 写入全局
+    qmc5883l_mag_x = mx;
+    qmc5883l_mag_y = my;
+    qmc5883l_mag_z = mz;
+
     // 转换为高斯单位
     qmc5883l_mag_x_gauss = qmc5883l_mag_transition(qmc5883l_mag_x);
     qmc5883l_mag_y_gauss = qmc5883l_mag_transition(qmc5883l_mag_y);
     qmc5883l_mag_z_gauss = qmc5883l_mag_transition(qmc5883l_mag_z);
-    
+
 //    qmc5883l_mag_x_gauss = PT1Filter_Apply(&filter_compass,qmc5883l_mag_x_gauss);
 //    qmc5883l_mag_y_gauss = PT1Filter_Apply(&filter_compass,qmc5883l_mag_y_gauss);
 //    qmc5883l_mag_z_gauss = PT1Filter_Apply(&filter_compass,qmc5883l_mag_z_gauss);
@@ -240,16 +282,146 @@ uint8 qmc5883l_init(void)
         qmc5883l_write_register(QMC5883L_REG_CONTROL_2, 0x01);
         
         // 根据选择的量程设置灵敏度
-        if(QMC5883L_DEFAULT_CONFIG & QMC5883L_RNG_2G)
-        {
-            current_sensitivity = QMC5883L_SENSITIVITY_2G;
-        }
-        else
+        // 注意: RNG_2G=0x00, 用 &RNG_2G 判断永远为假, 必须查 8G 位
+        if(QMC5883L_DEFAULT_CONFIG & QMC5883L_RNG_8G)
         {
             current_sensitivity = QMC5883L_SENSITIVITY_8G;
         }
+        else
+        {
+            current_sensitivity = QMC5883L_SENSITIVITY_2G;
+        }
     }
     while(0);
-    
+
     return return_state;
+}
+
+/*****************************************************************************
+ * @name       : qmc5883l_calibration_key_handler
+ * @date       : 2026-08-06
+ * @function   : 磁力计椭圆校准采集: KEY4按下开始/结束
+ *               开始记录后, 需调用 qmc5883l_calibration_collect() 每10ms采集一次
+ *               采集期间慢速匀速自转≥2圈, 结束后用上位机对全量数据做椭圆拟合
+ * @parameters : 无
+ * @retvalue   : 无
+ * @note       : 本函数不负责椭圆拟合, 只负责原始数据采集与发送(debug串口)
+******************************************************************************/
+static uint8_t qmc_cal_record = 0;   // 1=记录中
+
+void qmc5883l_calibration_key_handler(void)
+{
+    if (key_get_state(KEY_4) != KEY_SHORT_PRESS) return;
+
+    qmc_cal_record = !qmc_cal_record;
+    key_clear_state(KEY_4);
+
+    if (qmc_cal_record) {
+        printf("MAGCAL: start, rotate slowly >=2 turns\n");
+    } else {
+        printf("MAGCAL: end\n");
+    }
+}
+
+// 在 ISR 10ms 里调用: 记录期间每帧打印 mag_x,mag_y 原始值
+// 格式: x,y (每行一条, 上位机直接读)
+void qmc5883l_calibration_collect(void)
+{
+    if (!qmc_cal_record) return;
+    printf("%d,%d\n", qmc5883l_mag_x, qmc5883l_mag_y);
+}
+
+uint8_t qmc5883l_calibration_is_recording(void)
+{
+    return qmc_cal_record;
+}
+
+/*****************************************************************************
+ * @name       : 电机磁场干扰测试 (PWM → 磁力计偏移)
+ * @date       : 2026-08-06
+ * @function   : KEY4触发, 单电机 PWM 从0缓慢增加到指定值, 记录磁力计偏移
+ *               用于评估电机电流产生的磁场干扰, 决定是否需要动态补偿
+ * @note       : 测试时四轮架起(悬空), 电机逐个测
+ *               KEY4: 开始/停止  (与椭圆校准KEY4冲突, 编译时二选一)
+ *               ISR只做缓变(轻量), 打印放主循环(task函数)避免卡中断
+******************************************************************************/
+// 测试的电机: 0=L1左前 1=L2左后 2=R1右前 3=R2右后
+#define MOTOR_TEST_INDEX   0
+// 扫频上限: 0→MOTOR_TEST_MAX_DUTY 逐+1 (PWM值, PWM_DUTY_MAX=1000 → 百分比=值/10)
+// 300 = 30%占空比. 每30ms +1 → 全程9秒
+// 关键: 累加只在 KEY4 按下后(motor_test_run=1)才开始, 上电不累加, 避免直接冲到300
+#define MOTOR_TEST_MAX_DUTY   300
+
+static uint8_t motor_test_run = 0;
+static uint8_t motor_test_tick_div = 0;  // 30ms分频: 每3个10ms节拍 duty +1
+static int motor_test_duty = 0;          // 当前扫频PWM (仅在run后从0累加)
+static motor_t *motor_test_ptr = NULL;
+static gpio_pin_enum motor_test_turn;
+static pwm_channel_enum motor_test_pwm;
+static volatile uint8_t motor_test_tick = 0;   // ISR置1, 主循环消费
+
+void qmc5883l_motor_test_key_handler(void)
+{
+    if (key_get_state(KEY_4) != KEY_SHORT_PRESS) return;
+    key_clear_state(KEY_4);
+
+    if (!motor_test_run) {
+        // 开始: 选电机, 禁用PID闭环(避免ISR中Motor_PID_Control_All覆盖开环PWM)
+        Motor_Enable_PID(0);        // 关闭环, 让开环PWM生效
+        PID_Enable(&angle_pid_yaw, 0);
+        PID_Enable(&angle_pid_gyro, 0);
+        motor_test_duty = 0;        // 从0开始扫频 (KEY4后才累加, 上电不累加)
+        motor_test_tick_div = 0;    // 30ms分频清零
+        switch (MOTOR_TEST_INDEX) {
+            case 0: motor_test_ptr = &motor_L1; motor_test_turn = MotorL1_Turn; motor_test_pwm = MotorL1_Pwm; break;
+            case 1: motor_test_ptr = &motor_L2; motor_test_turn = MotorL2_Turn; motor_test_pwm = MotorL2_Pwm; break;
+            case 2: motor_test_ptr = &motor_R1; motor_test_turn = MotorR1_Turn; motor_test_pwm = MotorR1_Pwm; break;
+            default: motor_test_ptr = &motor_R2; motor_test_turn = MotorR2_Turn; motor_test_pwm = MotorR2_Pwm; break;
+        }
+        Motor_SetSpeed(motor_test_ptr, 0, motor_test_turn, motor_test_pwm);
+        motor_test_run = 1;
+        printf("MAGT: motor%d start, sweep 0->%d (PID off)\n", MOTOR_TEST_INDEX, MOTOR_TEST_MAX_DUTY);
+    } else {
+        // 停止: 关电机 + 恢复PID
+        Motor_SetSpeed(motor_test_ptr, 0, motor_test_turn, motor_test_pwm);
+        motor_test_run = 0;
+        Motor_Enable_PID(1);        // 恢复闭环
+        PID_Reset(&angle_pid_yaw);   PID_Enable(&angle_pid_yaw, 1);
+        PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
+        printf("MAGT: stop (PID restored)\n");
+    }
+}
+
+// ISR 10ms: 只置标志, 分档执行全放主循环
+void qmc5883l_motor_test_collect(void)
+{
+    if (motor_test_run) motor_test_tick = 1;
+}
+
+// 主循环调用: 每10ms节拍, 扫频 +1 执行
+// 关键: 只在 motor_test_run=1(KEY4按下)后累加, 上电不累加
+void qmc5883l_motor_test_task(void)
+{
+    if (!motor_test_tick) return;
+    motor_test_tick = 0;
+    if (!motor_test_run) return;
+
+    // 记录: pwm, mag_x, mag_y, 融合yaw, 陀螺yaw, 被测轮编码器速度(ω)
+    // ω用于电流估计 I≈a·PWM−b·ω 拟合 (无载高ω→电流小, 堵转ω≈0→电流大, 磁场=Σk·I)
+    // 只打印被测轮(MOTOR_TEST_INDEX对应轮)的spd, 四轮已确认接线
+    printf("%d,%d,%d,%.1f,%.1f,%.1f\n",
+           motor_test_duty, qmc5883l_mag_x, qmc5883l_mag_y,
+           fused_yaw, My_Imu660ra_GetYaw(),
+           motor_test_ptr->encoder_speed);
+
+    // 扫频: 每3个10ms(30ms) +1 → 0到300, 全程9秒, 到300保持等KEY4 (期间可堵轮测带载)
+    if (motor_test_duty < MOTOR_TEST_MAX_DUTY) {
+        if (++motor_test_tick_div < 3) return;   // 30ms分频: 前2拍只打印不累加
+        motor_test_tick_div = 0;
+        motor_test_duty++;
+        Motor_SetSpeed(motor_test_ptr, motor_test_duty, motor_test_turn, motor_test_pwm);
+        if (motor_test_duty == MOTOR_TEST_MAX_DUTY) {
+            printf("MAGT: reached %d (30%%), holding. Block wheel to test load.\n", MOTOR_TEST_MAX_DUTY);
+        }
+    }
 }

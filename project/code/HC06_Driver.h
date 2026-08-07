@@ -25,6 +25,7 @@ float GetPositionErrorX(void);
 float GetPositionErrorY(void);
 uint8_t GetDroneBeaconFlag(void);
 void ResetPositionError(void);
+void SetPositionError(float x, float y);   // App层写入位置误差(遥控器模拟无人机用)
 // 发送无人机指令（#A$ 起桨, #B$ 起飞, #C$ 急停, #D$ 已发车）
 void HC06_SendDroneCmd(uint8_t cmd);
 void HC06_SendVelocity(float vx, float vy);   // 发送目标速度给无人机前馈

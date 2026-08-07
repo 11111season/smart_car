@@ -67,7 +67,7 @@
 // 默认配置
 #define QMC5883L_DEFAULT_CONFIG    (QMC5883L_MODE_CONTINUOUS | \
                                     QMC5883L_ODR_100HZ | \
-                                    QMC5883L_RNG_8G | \
+                                    QMC5883L_RNG_2G | \
                                     QMC5883L_OSR_512)
 
 // 状态寄存器位定义
@@ -78,15 +78,23 @@
 // 芯片ID
 #define QMC5883L_CHIP_ID           (0xFF)  // 芯片ID寄存器固定返回值
 
-// 硬铁校准 (360°旋转采集)
-#define QMC5883L_HARD_IRON_X       (-5530)  // X中心 (raw)
-#define QMC5883L_HARD_IRON_Y       (-837)   // Y中心 (raw)
-#define QMC5883L_SOFT_IRON_RATIO   (1.45f)  // Y轴缩放 (X_range/Y_range = 3275/2258)
+// 硬铁校准 (2026-08-06 2G量程 360°旋转 椭圆拟合, 13760点)
+// 2G量程精确值 (非8G×4估算): 拟合中心 X=-24325, Y=-3199, 椭圆率1.031
+#define QMC5883L_HARD_IRON_X       (-24325) // X中心 (raw, 2G: 12000 LSB/G)
+#define QMC5883L_HARD_IRON_Y       (-3199)  // Y中心 (raw, 2G: 12000 LSB/G)
+#define QMC5883L_SOFT_IRON_RATIO   (1.031f) // 椭圆率<1.1 无需软铁修正 (未使用)
 
 // 灵敏度参数
 #define QMC5883L_SENSITIVITY_2G    (12000.0f)  // ±2G量程灵敏度: 12000 LSB/高斯
 #define QMC5883L_SENSITIVITY_8G    (3000.0f)   // ±8G量程灵敏度: 3000 LSB/高斯
 #define QMC5883L_TEMP_COEFF        (100.0f)    // 温度传感器系数: 100 LSB/℃
+
+// 中心化磁场幅度有效范围 (2G, 去硬铁中心后实测半径≈3450counts)
+// 错位读垃圾值(0/265/2558/±32512)去偏后幅度≥9000, 真实值≈3450
+// 用 [1500, 8000]² 区分, 同时防止首读(0,0)污染基线
+// 磁力计绕Z转的物理约束: 真实读数必落在硬铁中心附近圆上, 偏离即为无效
+#define QMC5883L_MAG_MIN_ABS2       (1500.0f * 1500.0f)   // 幅度下限²
+#define QMC5883L_MAG_MAX_ABS2       (8000.0f * 8000.0f)   // 幅度上限²
 
 // 超时计数
 #define QMC5883L_TIMEOUT_COUNT     (0x00FF)    // 超时计数
@@ -101,6 +109,7 @@ extern float qmc5883l_mag_y_gauss;    // Y轴磁场强度（高斯）
 extern float qmc5883l_mag_z_gauss;    // Z轴磁场强度（高斯）
 extern float qmc5883l_temperature;    // 温度值（℃）
 extern float qmc5883l_heading;        // 航向角（度，0-360）
+extern uint32_t qmc5883l_mag_reject_cnt;  // 错位读被拒次数 (调试用)
 
 // ====================================================函数声明====================================================
 //-------------------------------------------------------------------------------------------------------------------
@@ -129,6 +138,14 @@ void qmc5883l_get_temp(void);
 // 备注信息     获取磁场、温度和航向角数据
 //-------------------------------------------------------------------------------------------------------------------
 void qmc5883l_get_all(void);//10ms
+/* 椭圆校准采集: KEY4开始/结束, 采集期间ISR调用collect */
+void qmc5883l_calibration_key_handler(void);
+void qmc5883l_calibration_collect(void);
+uint8_t qmc5883l_calibration_is_recording(void);
+/* 电机磁场干扰测试: KEY4触发单电机PWM缓变, 记录磁力计偏移 */
+void qmc5883l_motor_test_key_handler(void);
+void qmc5883l_motor_test_collect(void);   // ISR调用: 轻量缓变+置标志
+void qmc5883l_motor_test_task(void);      // 主循环调用: 打印数据
 
 //-------------------------------------------------------------------------------------------------------------------
 // 函数简介     将 QMC5883L 磁场数据转换为实际物理数据

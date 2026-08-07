@@ -123,6 +123,7 @@ float GetPositionErrorY(void) { return pos_error_y; }
 uint8_t GetDroneBeaconFlag(void) { return drone_beacon_flag; }
 
 void ResetPositionError(void) { pos_error_x = 0.0f; pos_error_y = 0.0f; }
+void SetPositionError(float x, float y) { pos_error_x = x; pos_error_y = y; }
 
 /*****************************************************************************
  * @name       : HC06_Task

@@ -20,6 +20,7 @@ void Figure8_Test(float speed_mps, uint32_t duration_ms);
 void IMU660RA_Test(void);
 void My_IMU660RA_Test(void);
 void Mag_Test(void);     // 磁力计 vs 陀螺仪yaw对比打印
+void Mag_Yaw_Verify(void);   // 连续打印磁力计/融合/陀螺三路yaw
 
 // 闭环正方形测试
 void Square_ClosedLoop_Init(void);   // 一次调用, 初始化状态机和PID

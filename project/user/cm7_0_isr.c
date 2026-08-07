@@ -41,6 +41,8 @@
 #include "My_imu660ra.h"
 #include "HC06_Driver.h"
 #include "inertial_nav.h"   // 暂时注释
+#include "QMC5883L.h"       // 磁力计椭圆校准采集
+#include "key_task.h"       // MAG_CALIB_MODE / MAG_CALIB_MOTOR_TEST
 volatile int count = 0;
 volatile uint64_t time_us = 0;
 volatile int Start_Pid_Flag = 0;
@@ -57,7 +59,12 @@ void pit0_ch0_isr()
 
     Encoder_Data_Get();
     My_Imu660ra_Update();
-    MagYaw_Update();                                    // 磁力计融合
+    //MagYaw_Update();                                    // 磁力计融合 (2026-08-07: 暂时注释, 用陀螺仪+零漂)
+#if MAG_CALIB_MODE && MAG_CALIB_MOTOR_TEST
+    qmc5883l_motor_test_collect();                      // 电机磁场干扰测试 (KEY4触发, PWM缓变)
+#elif MAG_CALIB_MODE
+    qmc5883l_calibration_collect();                     // 椭圆校准采集 (KEY4控制, 记录期每10ms打印)
+#endif
     InertialNav_PosUpdate();
 
     PositionControl_Update();
@@ -100,7 +107,13 @@ void pit0_ch0_isr()
         yaw_drift_comp -= angle_pid_yaw.err_int_k_1 * 0.0005f;
 
         float yaw = My_Imu660ra_GetYaw() - yaw_drift_comp;
-        PID_SetTarget(&angle_pid_yaw, angle_target);
+
+        // 角度环绕: 把PID目标平移到当前yaw的±180内, 使误差走最短路径
+        // (否则 target=180° yaw=-180° 时 PID 误算330°误差, 舍近求远)
+        float target_eff = angle_target;
+        while (target_eff - yaw >  180.0f) target_eff -= 360.0f;
+        while (target_eff - yaw < -180.0f) target_eff += 360.0f;
+        PID_SetTarget(&angle_pid_yaw, target_eff);
         float omega_target = PID_Calculate(&angle_pid_yaw, yaw);
 
         // 积分已部分转移至漂移补偿, 缓慢衰减避免双重计数
@@ -269,8 +282,8 @@ void uart1_isr (void)
     if(uart_isr_mask(UART_1))            // 串口1接收中断
     {
 
-        //wireless_module_uart_handler();  // 无线模块统一回调函数
-      HC06_UART_RX_Handler();
+        wireless_module_uart_handler();  // 无线模块统一回调函数 (当前挂 lora3a22_uart_callback)
+        //HC06_UART_RX_Handler();        // 485/蓝牙接收暂用 (LoRa模拟无人机期间注释)
 
     }
     else                                // 串口1发送中断
