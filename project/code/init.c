@@ -2,6 +2,7 @@
 #include "key_task.h"      // MAG_CALIB_MODE
 #include "App_lora3a22.h"
 #include "App_Menu.h"
+#include "W25Q64.h"        // 掉电存储 (软件SPI, P06_2/3/4/5)
 
 /*****************************************************************************
  * @name       : Init_all
@@ -22,10 +23,16 @@ void Init_all(void)
     //陀螺仪初始化
     //My_MPU6050_Init();
     imu660ra_init();
-    //菜单初始化
-    App_Menu_Init();
+    //菜单初始化 (2026-08-08: 烧录器顶着屏幕, 暂时注释; 恢复后取消注释)
+    //App_Menu_Init();
     //磁力计初始化 (2026-08-07: 暂时注释, 导航用陀螺仪+零漂学习)
     //qmc5883l_init();
+    //W25Q64 掉电存储初始化 (软件SPI, P06_2/3/4/5)
+    {
+        uint8 w25_err = w25q64_init();
+        printf("W25Q64: init %s, ID=0x%06lX\n",
+               (w25_err ? "FAIL" : "OK"), (unsigned long)w25q64_chip_id);
+    }
     //定时器初始化
     //蓝牙/485初始化 (LoRa模拟无人机期间注释)
     //HC06_Init(1000000);

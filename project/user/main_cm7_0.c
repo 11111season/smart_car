@@ -32,7 +32,9 @@ int main(void)
     {
         KeyTask_Handler();
         InertialNav_Update();
-        App_Menu_Task();
+        //W25Q64_Test();               // 掉电存储通路测试 (写读回比对). 掉电持久化测试期间注释 — 它每轮会先擦扇区0, 会把要验证的数据冲掉!
+        W25Q64_Persist_Test();         // 掉电持久化测试: 本次写"Hello W25Q64!", 掉电后改宏重烧验证读取
+        //App_Menu_Task();             // 2026-08-08: 烧录器顶着屏幕, 暂时注释
         //HC06_Task();                 // 485/蓝牙接收暂用 (LoRa模拟无人机期间注释)
 #if !MAG_CALIB_MODE
         App_Lora_Task();               // LoRa遥控器模拟无人机 (校准期间关闭, 避免污染磁力计数据)

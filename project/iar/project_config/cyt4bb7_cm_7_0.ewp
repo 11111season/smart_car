@@ -1194,6 +1194,12 @@
             <name>$PROJ_DIR$\..\..\code\QMC5883L.h</name>
         </file>
         <file>
+            <name>$PROJ_DIR$\..\..\code\W25Q64.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\W25Q64.h</name>
+        </file>
+        <file>
             <name>$PROJ_DIR$\..\..\code\test.c</name>
         </file>
         <file>

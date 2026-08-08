@@ -455,3 +455,190 @@ void Figure8_ClosedLoop_Update(void)
         printf("F8: leg %d start\n", f8_cl_leg);
     }
 }
+
+//-------------------------------------------------------------------------------------------------------------------
+// W25Q64 掉电存储测试通路
+// 1. 读 JEDEC ID (判断硬件通不通)
+// 2. 擦除扇区0 (4KB)
+// 3. 写入 256 字节递增模式
+// 4. 读回比对
+// 结果打印到默认串口 (UART_0, 115200)
+// 调用位置: 主循环连续调用, 内部用 done 标志只测一轮 (避免反复擦写损耗 Flash)
+//-------------------------------------------------------------------------------------------------------------------
+#define W25Q64_TEST_ADDR    (0x000000)   // 测试扇区起始地址 (扇区0)
+
+void W25Q64_Test(void)
+{
+    static uint8 done = 0;
+    static uint8 state = 0;
+    static uint32 test_addr = W25Q64_TEST_ADDR;
+    // 注意: 状态机跨多次主循环调用, 缓冲区必须 static, 否则比对时是未初始化的新栈数组
+    static uint8 tx_buf[W25Q64_PAGE_SIZE];
+    static uint8 rx_buf[W25Q64_PAGE_SIZE];
+
+    if (done) return;   // 只测一轮
+
+    // 上电先确认ID正常 (init.c 已打印过, 这里再确认一次当前值)
+    if (w25q64_chip_id == 0 || (w25q64_chip_id & 0xFFFFFF) == 0xFFFFFF)
+    {
+        printf("W25Q64: no device (ID=0x%06lX)\n", (unsigned long)w25q64_chip_id);
+        done = 1;
+        return;
+    }
+
+    switch (state)
+    {
+        case 0:  // 擦除扇区
+            printf("W25Q64: erase sector @0x%06lX...\n", (unsigned long)test_addr);
+            w25q64_sector_erase(test_addr);
+            state = 1;
+            break;
+
+        case 1:  // 填充数据并写入
+            for (uint16 i = 0; i < W25Q64_PAGE_SIZE; i++)
+            {
+                tx_buf[i] = (uint8)i;   // 递增模式: 0x00,0x01,...,0xFF
+            }
+            printf("W25Q64: write %d bytes...\n", W25Q64_PAGE_SIZE);
+            w25q64_write(tx_buf, test_addr, W25Q64_PAGE_SIZE);
+            state = 2;
+            break;
+
+        case 2:  // 读回
+            w25q64_read(rx_buf, test_addr, W25Q64_PAGE_SIZE);
+            state = 3;
+            break;
+
+        case 3:  // 比对
+        {
+            uint8 pass = 1;
+            for (uint16 i = 0; i < W25Q64_PAGE_SIZE; i++)
+            {
+                if (tx_buf[i] != rx_buf[i])
+                {
+                    if (pass) printf("W25Q64: FAIL @0x%04X exp=0x%02X got=0x%02X\n",
+                                     i, tx_buf[i], rx_buf[i]);
+                    pass = 0;
+                    break;
+                }
+            }
+            if (pass)
+            {
+                printf("W25Q64: PASS, %d bytes @0x%06lX verified\n",
+                       W25Q64_PAGE_SIZE, (unsigned long)test_addr);
+            }
+            else
+            {
+                printf("W25Q64: FAIL (see above)\n");
+            }
+            done = 1;   // 测试结束
+            break;
+        }
+        default:
+            state = 0;
+            break;
+    }
+}
+
+//-------------------------------------------------------------------------------------------------------------------
+// W25Q64 掉电持久化测试 (验证 NorFlash 掉电不丢数据)
+// 流程:  写入模式写入 "Hello W25Q64!" → 掉电 → 重启后把 W25Q64_PERSIST_WRITE 改为 0
+//        重新编译烧录 = 读取模式, 验证能原样读回 → 掉电存储打通
+// 切换:  改下面 W25Q64_PERSIST_WRITE 宏即可 (1=写, 0=读), 无需动 main.c
+// 调用:  主循环连续调用, done 标志只执行一轮 (避免反复擦写损耗 Flash)
+// 注意:  读取验证前必须禁用 W25Q64_Test() — 它会先擦除扇区0, 把要验证的数据冲掉!
+//-------------------------------------------------------------------------------------------------------------------
+#define W25Q64_PERSIST_ADDR     (0x000000)          // 存放位置 (扇区0起始)
+#define W25Q64_PERSIST_MSG      "Hello W25Q64!"     // 标志性内容 (随便写, 掉电后能原样读回即通过)
+#define W25Q64_PERSIST_MAX_LEN  (32)                // 读取缓冲长度 (读 MAX-1 字节, 末尾手动补 \0)
+#define W25Q64_PERSIST_WRITE    (0)                 // 1=本次写入; 掉电后改为 0 重新烧录 = 读取验证
+
+void W25Q64_Persist_Test(void)
+{
+    static uint8 done = 0;
+    static uint8 state = 0;
+    static uint8 msg[W25Q64_PERSIST_MAX_LEN];
+
+    if (done) return;
+
+    // 上电先确认ID正常
+    if (w25q64_chip_id == 0 || (w25q64_chip_id & 0xFFFFFF) == 0xFFFFFF)
+    {
+        printf("W25Q64: no device (ID=0x%06lX)\n", (unsigned long)w25q64_chip_id);
+        done = 1;
+        return;
+    }
+
+#if W25Q64_PERSIST_WRITE
+    // ================= 写入模式 (掉电前运行一次) =================
+    switch (state)
+    {
+        case 0:  // 擦除扇区 (先清干净, 保证能写出可识别内容)
+            printf("W25Q64: P-WRITE erase sector @0x%06lX...\n", (unsigned long)W25Q64_PERSIST_ADDR);
+            w25q64_sector_erase(W25Q64_PERSIST_ADDR);
+            state = 1;
+            break;
+
+        case 1:  // 写入字符串 (sizeof 含结尾 \0, memcpy 一并拷入)
+        {
+            uint8 len = (uint8)sizeof(W25Q64_PERSIST_MSG);
+            memcpy(msg, W25Q64_PERSIST_MSG, len);
+            printf("W25Q64: P-WRITE \"%s\" (%uB) @0x%06lX...\n",
+                   (char*)msg, len, (unsigned long)W25Q64_PERSIST_ADDR);
+            w25q64_write(msg, W25Q64_PERSIST_ADDR, len);
+            state = 2;
+            break;
+        }
+
+        case 2:  // 立即读回, 先确认本次写入本身没问题
+            w25q64_read(msg, W25Q64_PERSIST_ADDR, W25Q64_PERSIST_MAX_LEN - 1);
+            msg[W25Q64_PERSIST_MAX_LEN - 1] = 0;   // 手动补 \0, 防 strcmp 越界
+            if (strcmp((char*)msg, W25Q64_PERSIST_MSG) == 0)
+            {
+                printf("W25Q64: P-WRITE verified OK.\n");
+                printf("W25Q64: now POWER OFF -> set W25Q64_PERSIST_WRITE=0 and rebuild -> power on to verify\n");
+            }
+            else
+            {
+                printf("W25Q64: P-WRITE verify FAIL (read=\"%s\")\n", (char*)msg);
+            }
+            done = 1;
+            break;
+
+        default:
+            state = 0;
+            break;
+    }
+#else
+    // ================= 读取模式 (掉电重启后运行, 验证数据还在) =================
+    switch (state)
+    {
+        case 0:  // 读回
+            w25q64_read(msg, W25Q64_PERSIST_ADDR, W25Q64_PERSIST_MAX_LEN - 1);
+            msg[W25Q64_PERSIST_MAX_LEN - 1] = 0;   // 手动补 \0
+            state = 1;
+            break;
+
+        case 1:
+            // 先查 0xFF (扇区未写入/被擦过) 再做 strcmp, 防止读到无 \0 的脏数据越界
+            if (msg[0] == 0xFF)
+            {
+                printf("W25Q64: P-READ empty (all 0xFF) — nothing written yet?\n");
+            }
+            else if (strcmp((char*)msg, W25Q64_PERSIST_MSG) == 0)
+            {
+                printf("W25Q64: P-READ PASS! \"%s\" survived power-off\n", (char*)msg);
+            }
+            else
+            {
+                printf("W25Q64: P-READ mismatch, got \"%s\"\n", (char*)msg);
+            }
+            done = 1;
+            break;
+
+        default:
+            state = 0;
+            break;
+    }
+#endif
+}

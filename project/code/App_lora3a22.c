@@ -79,7 +79,7 @@ void App_Lora_Init(void)
     flag2_count = 0;
 
     app_lora_inited = 1;
-    printf("App_Lora: init ok, simulating drone (flag=1)\n");
+    //printf("App_Lora: init ok, simulating drone (flag=1)\n");   // 2026-08-08 暂注释 (W25Q64测试期间串口干净)
 }
 
 //-------------------------------------------------------------------------------------------------------------------
@@ -97,6 +97,8 @@ void App_Lora_Task(void)
     // ---- 调试: 每500ms打印一次数据链路状态 ----
     // k=key[0..3]摇杆/副机按键, sw=switch_key[0..3]拨杆, jy=joystick[0..3]摇杆轴
     // 按遥控器 S4 观察哪个 k/sw 字段跳1, 确定完赛触发的映射
+    // 2026-08-08: 暂时注释 (W25Q64 测试期间干扰串口判断)
+#if 0
     static uint64_t last_dbg_us = 0;
     if (time_us - last_dbg_us > 500000) {
         last_dbg_us = time_us;
@@ -115,6 +117,7 @@ void App_Lora_Task(void)
                lora3a22_uart_transfer.joystick[3],
                lora3a22_state_flag);
     }
+#endif
 
     // ---- 完赛触发: 最左边拨杆 switch_key[0] 1→0 = 完赛 (模拟 flag=3) ----
     // 拨杆默认位置1, 完赛时拨到位置0. 边沿检测(1→0)只触发一次, race_done 自锁由 ISR 处理.
@@ -154,7 +157,7 @@ void App_Lora_Task(void)
             if (drone_beacon_flag != 1) {
                 drone_beacon_flag = 1;
                 flag2_count = 0;
-                printf("App_Lora: link OK, beacon found (flag=1)\n");
+                //printf("App_Lora: link OK, beacon found (flag=1)\n");   // 2026-08-08 暂注释 (W25Q64测试)
             }
         } else if (time_us - app_last_active_us > APP_IDLE_TIMEOUT_US) {
             // 空闲超时: 清误差 + 模拟丢信标 (flag=2) → 触发惯导巡逻
@@ -162,7 +165,7 @@ void App_Lora_Task(void)
             if (drone_beacon_flag != 2) {
                 drone_beacon_flag = 2;
                 flag2_count = 0;
-                printf("App_Lora: remote idle, beacon lost (flag=2)\n");
+                //printf("App_Lora: remote idle, beacon lost (flag=2)\n");   // 2026-08-08 暂注释
             }
             if (flag2_count < 255) flag2_count++;   // 连续空闲帧计数 (uint8上限保护)
         }
@@ -173,7 +176,7 @@ void App_Lora_Task(void)
         if (drone_beacon_flag != 2) {
             drone_beacon_flag = 2;
             flag2_count = 0;
-            printf("App_Lora: link lost, beacon lost (flag=2)\n");
+            //printf("App_Lora: link lost, beacon lost (flag=2)\n");   // 2026-08-08 暂注释 (W25Q64测试)
         }
         if (flag2_count < 255) flag2_count++;   // 连续超时帧计数 (uint8上限保护)
         return;   // 断连期间不更新角度/误差

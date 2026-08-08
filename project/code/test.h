@@ -5,6 +5,7 @@
 #include "Motor.h"
 #include "My_imu660ra.h"
 #include "QMC5883L.h"
+#include "W25Q64.h"
 
 /*----------------------- 外部变量声明 -----------------------*/
 extern volatile int count;
@@ -33,5 +34,12 @@ void Figure8_ClosedLoop_Update(void);
 // 闭环圆形测试
 void Circle_ClosedLoop_Init(float radius_m, int dir);   // dir: 1=逆时针, -1=顺时针
 void Circle_ClosedLoop_Update(void);
+
+// W25Q64 掉电存储测试通路: 读ID + 扇区擦除 + 写读回比对, 结果打印到 UART_0
+void W25Q64_Test(void);
+
+// W25Q64 掉电持久化测试: 写"Hello W25Q64!" → 掉电 → 改宏重烧 → 读取验证掉电不丢数据
+// 模式切换在 test.c 内 W25Q64_PERSIST_WRITE 宏 (1=写, 0=读)
+void W25Q64_Persist_Test(void);
 
 #endif /* CODE_TEST_H_ */
