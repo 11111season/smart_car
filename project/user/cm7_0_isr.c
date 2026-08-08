@@ -45,6 +45,7 @@
 #include "key_task.h"       // MAG_CALIB_MODE / MAG_CALIB_MOTOR_TEST
 volatile int count = 0;
 volatile uint64_t time_us = 0;
+volatile uint16_t menu_tick_10ms = 0;   // 菜单显示节拍器 (10ms, pit0_ch10_isr 维护)
 volatile int Start_Pid_Flag = 0;
 volatile int Stop_Pid_Flag = 0;
 volatile uint8_t send_uart_cmd_flag = 0;
@@ -183,10 +184,10 @@ void pit0_ch2_isr()                     // 定时器通道 2 的中断处理函�
 
 }
 
-void pit0_ch10_isr()                    // 定时器通道 10 的中断处理函数
+void pit0_ch10_isr()                    // 定时器通道 10 的中断处理函数 (菜单显示节拍器 10ms)
 {
     pit_isr_flag_clear(PIT_CH10);
-
+    menu_tick_10ms++;
 }
 
 void pit0_ch11_isr()                    // 定时器通道 11 的中断处理函数

@@ -8,6 +8,10 @@
 *                   KEY_1: 发送无人机指令1
 *                   KEY_2: 发送无人机指令2
 *                   KEY_3: 停止 (关PID + 电机刹车 + 发指令3)
+*
+* 修改记录
+* 2026-08-07        按键处理整体移交 App_Menu 菜单 (重构控制链路)
+*                   KeyTask_Handler 内按键逻辑用 #if 0 关闭, 由菜单统一收发任务
 ********************************************************************************************************************/
 
 #include "key_task.h"
@@ -17,7 +21,7 @@
 #include "inertial_nav.h"
 #include "QMC5883L.h"
 
-static uint8_t pid_started = 0;
+//static uint8_t pid_started = 0;   // 2026-08-07: 按键逻辑关闭后无读取方, 注释避免"set but never used"警告
 
 void KeyTask_Init(void)
 {
@@ -29,11 +33,15 @@ void KeyTask_Init(void)
     angle_target = 0.0f;
     target_vx  = 0.0f;
     target_vy  = 0.0f;
-    pid_started = 1;
+    //pid_started = 1;              // 2026-08-07: 同 pid_started 变量, 一并注释
 }
 
 void KeyTask_Handler(void)
 {
+#if 0
+    // 2026-08-07: 按键逻辑整体关闭, 控制链路重构到 App_Menu 菜单, 所有按键由菜单统一处理
+    // 恢复方法: 把下面 #if 0 改成 #if 1, 并和 App_Menu 协商好按键分工 (不要两边同时处理)
+    // 注意: key_scanner() 在 cm7_0_isr.c 的 PIT 中断里调用, 与本函数无关, 不受影响
     if(key_get_state(KEY_1) == KEY_SHORT_PRESS)
     {
         HC06_SendDroneCmd(1);
@@ -76,4 +84,5 @@ void KeyTask_Handler(void)
         HC06_SendDroneCmd(3);
         key_clear_state(KEY_3);
     }
+#endif
 }

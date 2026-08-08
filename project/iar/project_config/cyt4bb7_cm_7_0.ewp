@@ -1116,6 +1116,24 @@
     <group>
         <name>code</name>
         <file>
+            <name>$PROJ_DIR$\..\..\code\App_lora3a22.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\App_lora3a22.h</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\App_Menu.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\App_Menu.h</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\menu_font.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\menu_font.h</name>
+        </file>
+        <file>
             <name>$PROJ_DIR$\..\..\code\current_loop.c</name>
         </file>
         <file>
@@ -1141,9 +1159,6 @@
         </file>
         <file>
             <name>$PROJ_DIR$\..\..\code\init.c</name>
-        </file>
-        <file>
-            <name>$PROJ_DIR$\..\..\code\App_lora3a22.c</name>
         </file>
         <file>
             <name>$PROJ_DIR$\..\..\code\init.h</name>

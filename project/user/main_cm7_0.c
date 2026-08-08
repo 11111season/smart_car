@@ -15,6 +15,7 @@
 #include "test.h"
 #include "App_lora3a22.h"
 #include "QMC5883L.h"   // 磁力计电机干扰测试task
+#include "App_Menu.h" // 菜单显示
 
 // **************************** 代码区域 ****************************
 
@@ -31,6 +32,7 @@ int main(void)
     {
         KeyTask_Handler();
         InertialNav_Update();
+        App_Menu_Task();
         //HC06_Task();                 // 485/蓝牙接收暂用 (LoRa模拟无人机期间注释)
 #if !MAG_CALIB_MODE
         App_Lora_Task();               // LoRa遥控器模拟无人机 (校准期间关闭, 避免污染磁力计数据)

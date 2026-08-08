@@ -1,6 +1,7 @@
 #include "init.h"
 #include "key_task.h"      // MAG_CALIB_MODE
 #include "App_lora3a22.h"
+#include "App_Menu.h"
 
 /*****************************************************************************
  * @name       : Init_all
@@ -21,6 +22,8 @@ void Init_all(void)
     //陀螺仪初始化
     //My_MPU6050_Init();
     imu660ra_init();
+    //菜单初始化
+    App_Menu_Init();
     //磁力计初始化 (2026-08-07: 暂时注释, 导航用陀螺仪+零漂学习)
     //qmc5883l_init();
     //定时器初始化
@@ -33,6 +36,7 @@ void Init_all(void)
     pit_ms_init(PIT_CH0,10);//开启了10ms中断
     pit_ms_init(PIT_CH1,10);//开启了10ms中断
     pit_us_init(PIT_CH2, 1);//这样就代表定时器定时1us触发一次中断
+    pit_ms_init(PIT_CH10,10);//菜单显示节拍器 (10ms, App_Menu 消费 1s 自动返回, 独立定时器不与其他任务共用)
     
     // 启用速度环和角度环
     //Motor_Enable_PID(1);     // 由按键启动

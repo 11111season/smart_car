@@ -1,0 +1,50 @@
+// 由 gen_menu_text.py 生成 @ 2026-08-08 08:32:20
+// 输入: 惯导设置 无人机控制 停止所有控制任务 记录索引 记录完成 数据写入 数据读取 清除数据 起飞 降落 电机启动 停止
+
+/* 惯导设置 */
+static const menu_chn_idx_enum TXT_0[] = { MENU_CHN_GUAN, MENU_CHN_DAO, MENU_CHN_SHE, MENU_CHN_ZHI3 };  // 惯导设置
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_0, 4 }, STATE_MAIN, NULL },   // 惯导设置
+
+/* 无人机控制 */
+static const menu_chn_idx_enum TXT_1[] = { MENU_CHN_WU2, MENU_CHN_REN, MENU_CHN_JI2, MENU_CHN_KONG, MENU_CHN_ZHI2 };  // 无人机控制
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_1, 5 }, STATE_MAIN, NULL },   // 无人机控制
+
+/* 停止所有控制任务 */
+static const menu_chn_idx_enum TXT_2[] = { MENU_CHN_TING, MENU_CHN_ZHI, MENU_CHN_SUO, MENU_CHN_YOU, MENU_CHN_KONG, MENU_CHN_ZHI2, MENU_CHN_REN2, MENU_CHN_WU3 };  // 停止所有控制任务
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_2, 8 }, STATE_MAIN, NULL },   // 停止所有控制任务
+
+/* 记录索引 */
+static const menu_chn_idx_enum TXT_3[] = { MENU_CHN_JI, MENU_CHN_LU, MENU_CHN_SUO2, MENU_CHN_YIN };  // 记录索引
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_3, 4 }, STATE_MAIN, NULL },   // 记录索引
+
+/* 记录完成 */
+static const menu_chn_idx_enum TXT_4[] = { MENU_CHN_JI, MENU_CHN_LU, MENU_CHN_WAN, MENU_CHN_CHENG };  // 记录完成
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_4, 4 }, STATE_MAIN, NULL },   // 记录完成
+
+/* 数据写入 */
+static const menu_chn_idx_enum TXT_5[] = { MENU_CHN_SHU2, MENU_CHN_JU, MENU_CHN_XIE, MENU_CHN_RU };  // 数据写入
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_5, 4 }, STATE_MAIN, NULL },   // 数据写入
+
+/* 数据读取 */
+static const menu_chn_idx_enum TXT_6[] = { MENU_CHN_SHU2, MENU_CHN_JU, MENU_CHN_DU, MENU_CHN_QU };  // 数据读取
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_6, 4 }, STATE_MAIN, NULL },   // 数据读取
+
+/* 清除数据 */
+static const menu_chn_idx_enum TXT_7[] = { MENU_CHN_QING, MENU_CHN_CHU, MENU_CHN_SHU2, MENU_CHN_JU };  // 清除数据
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_7, 4 }, STATE_MAIN, NULL },   // 清除数据
+
+/* 起飞 */
+static const menu_chn_idx_enum TXT_8[] = { MENU_CHN_QI2, MENU_CHN_FEI };  // 起飞
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_8, 2 }, STATE_MAIN, NULL },   // 起飞
+
+/* 降落 */
+static const menu_chn_idx_enum TXT_9[] = { MENU_CHN_JIANG2, MENU_CHN_LUO };  // 降落
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_9, 2 }, STATE_MAIN, NULL },   // 降落
+
+/* 电机启动 */
+static const menu_chn_idx_enum TXT_10[] = { MENU_CHN_DIAN2, MENU_CHN_JI2, MENU_CHN_QI3, MENU_CHN_DONG };  // 电机启动
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_10, 4 }, STATE_MAIN, NULL },   // 电机启动
+
+/* 停止 */
+static const menu_chn_idx_enum TXT_11[] = { MENU_CHN_TING, MENU_CHN_ZHI };  // 停止
+// 菜单项用法(贴进菜单项, 跳二级就把 STATE_MAIN 换成对应目标): { { TXT_11, 2 }, STATE_MAIN, NULL },   // 停止
