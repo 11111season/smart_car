@@ -40,6 +40,7 @@ void KeyTask_Handler(void)
 {
 #if 0
     // 2026-08-07: 按键逻辑整体关闭, 控制链路重构到 App_Menu 菜单, 所有按键由菜单统一处理
+    // 2026-08-08: InertialNav_KeyHandler 已删除 (KEY_4 记录流程迁移到菜单 STATE_INR_WP_START/REC)
     // 恢复方法: 把下面 #if 0 改成 #if 1, 并和 App_Menu 协商好按键分工 (不要两边同时处理)
     // 注意: key_scanner() 在 cm7_0_isr.c 的 PIT 中断里调用, 与本函数无关, 不受影响
     if(key_get_state(KEY_1) == KEY_SHORT_PRESS)
@@ -63,7 +64,7 @@ void KeyTask_Handler(void)
     // 校准模式: KEY4 开始/结束磁力计采集 (慢速自转≥2圈)
     qmc5883l_calibration_key_handler();
 #else
-    InertialNav_KeyHandler();
+    // InertialNav_KeyHandler();   // 2026-08-08 已删除: 记录流程迁移到菜单, 此处保留注释占位
 #endif
 
     if(key_get_state(KEY_3) == KEY_SHORT_PRESS)

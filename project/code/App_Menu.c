@@ -47,10 +47,22 @@
 *                                                           · y 确认 → "发车区航点设置完毕" 1s 回二级
 *                                                           · 偏移值带符号位, 存 int16 0.1m 单位 (前正后负=x, 左正右负=y)
 *                                                           · 缺字 区/是/否/用/禁/输/偏/移/坐/标/米 已由用户取模填入 menu_font.c 79-89
+* 2026-08-08        Claude                             v2.3.0 菜单控制逻辑接线 (重大更新, 配套 w25q64_storage + 惯导运行时航点上限):
+*                                                           · 记录航点: 首次KEY_4取消闭环(车可自由推动摆车头), 之后KEY_4开始/结束记录
+*                                                                      全部录完 → Inav_BuildMap + 写W25Q64地图区 → "所有航点记录完毕" 1s回二级
+*                                                           · 设置航点数量: KEY_2确认 → 重算上限 + 写W25Q64设置区
+*                                                           · 发车区航点设置: 确认是/否 → 写启用标志(影响总航点); y确认 → 写偏移
+*                                                           · 清除历史数据: KEY_2 → FlashStore_ClearAll清两区 + 清内存 + 全局恢复默认
+*                                                           · 无人机控制: KEY_2起桨/KEY_2起飞(发送指令为//占位, 遥控模拟期间注释)
+*                                                                      KEY_4发车 → Inav_Launch(武装+3.5s)
+*                                                           · 停止所有控制任务: Inav_StopAll → 关环+停桨+race_done完赛级锁定(断电刷新)
+*                                                           · KEY_3始终退回主菜单, 记录页取消闭环放首次KEY_4 (不与菜单冲突)
 ********************************************************************************************************************/
 
 #include "App_menu.h"
 #include "menu_font.h"
+#include "inertial_nav.h"      // 菜单控制接口: Inav_* (记录/构建/发车/停止)
+#include "w25q64_storage.h"    // W25Q64 掉电存储分区: flash_settings_t / FlashStore_*
 
 extern volatile uint16_t menu_tick_10ms;   // 菜单节拍器 (10ms, cm7_0_isr.c pit0_ch10_isr 维护)
 
@@ -66,7 +78,7 @@ typedef enum{
     STATE_INR_SET_WP_DONE,       //航点数量设置完成 (1s 后自动回二级)
     STATE_INR_WP_START,          //请开始记录第X个航点 (KEY_4 开始记录)
     STATE_INR_WP_REC,            //等待第X个航点记录完成 (KEY_4 结束记录)
-    STATE_INR_WP_DONE,           //所有航点记录完毕 (1s 后自动回主菜单)
+    STATE_INR_WP_DONE,           //所有航点记录完毕 (1s 后自动回惯导二级)
     STATE_INR_LAUNCH_ENABLE,     //发车区航点设置: 是否启用发车区航点：是/否 (KEY_1 切换, KEY_2 确认, 未确认闪烁)
     STATE_INR_LAUNCH_DISABLED,   //已禁用发车区航点 (1s 后自动回二级)
     STATE_INR_LAUNCH_OFFSET_X,   //请输入偏移坐标: 设置偏移x (第三行白框*, x 闪烁)
@@ -83,7 +95,8 @@ MenuState menu_state = STATE_MAIN;          // 当前所在菜单状态
 
 /* 惯导记录流程局部变量 */
 static uint8_t  wp_cur          = 0;   // 当前记录航点 (0-based, 显示第X个)
-static uint8_t  wp_set          = 1;   // 已确认航点总数 (菜单"设置航点数量"改, 驱动记录流程显示次数; 不含发车区航点)
+uint8_t         wp_set          = 1;   // 已确认航点总数 (菜单"设置航点数量"改, 驱动记录流程显示次数; 不含发车区航点; 上电由W25Q64覆盖)
+static uint8_t  rec_cancel_done = 0;   // 记录页第一次KEY_4是否已取消闭环 (1=已取消, 之后的KEY_4才正式记录)
 static uint8_t  set_num         = 1;   // 设置页实时调整值 (进入页重置为1)
 static uint8_t  set_blink_last  = 0xFF;// 上次闪烁相位 (用于闪烁变化检测)
 static uint16_t auto_back_tick  = 0;   // 自动返回计时起点 (menu_tick_10ms)
@@ -95,6 +108,21 @@ int16   launch_off_y  = 0;             // 发车区偏移y (单位0.1m, 范围 -
 
 /* 发车区设置页闪烁局部变量 */
 static uint8_t  launch_blink_last = 0xFF;   // 发车区设置闪烁相位 (上次值)
+
+/* 当前菜单配置 → W25Q64 Region2 (设置区: 航点数量 + 发车区启用标志 + 偏移xy) */
+static void menu_save_settings(void)
+{
+    flash_settings_t st;
+    st._pad          = 0;                 // 填充字节清零, 避免读回校验意外
+    st.magic         = FLASH_MAGIC;
+    st.wp_set        = wp_set;
+    st.launch_enable = launch_enable;
+    st.launch_off_x  = launch_off_x;
+    st.launch_off_y  = launch_off_y;
+    FlashStore_SaveSettings(&st);
+    printf("FLASH: settings saved (wp=%d en=%d off=%d,%d)\n",
+           wp_set, launch_enable, launch_off_x, launch_off_y);
+}
 
 #define MENU_SET_MAX            9     // 航点数设置上限 (对应字模一~九)
 #define MENU_SET_NUM_X          152   // 设置页 num 显示 x (文字占8字128px + ':' 8px + 4px间距)
@@ -464,7 +492,7 @@ void App_Menu_Init(void)
 {
     ips200_init(IPS200_TYPE_SPI);
     ips200_set_font(IPS200_8X16_FONT);          // ASCII (* 号等) 用 8x16, 与 16px 汉字等高
-    printf("MENU v2.2.0\r\n");                  // 版本标记: 串口确认烧录的是最新固件
+    printf("MENU v2.3.0\r\n");                  // 版本标记: 串口确认烧录的是最新固件
     ips200_set_color(RGB565_RED, RGB565_BLACK);
     ips200_full(RGB565_BLACK);                  // 显式填黑, 不依赖全局背景色
     menu_draw_screen(menu_state);               // 开机绘制一次主界面
@@ -510,7 +538,7 @@ void App_Menu_Task(void)
             key_clear_state(KEY_2);
             if      (menu_index == 0) menu_state = STATE_Internal_Nav_Record;             // 惯导设置
             else if (menu_index == 1) menu_state = STATE_UAV_Control;                     // 无人机控制
-            else { menu_state = STATE_Stop_All_Control; auto_back_tick = menu_tick_10ms; } // 停止所有控制任务 (提示1s后回主菜单)
+            else { Inav_StopAll(); menu_state = STATE_Stop_All_Control; auto_back_tick = menu_tick_10ms; } // 停止所有控制任务 (关环+停桨+完赛级锁定, 提示1s后回主菜单)
         }
         break;
 
@@ -530,10 +558,18 @@ void App_Menu_Task(void)
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_2);
-            if      (menu_index == 0) { wp_cur = 0; menu_state = STATE_INR_WP_START; }                       // 记录航点 → 记录流程
+            if      (menu_index == 0) { wp_cur = 0; rec_cancel_done = 0; Inav_ResetMap(); menu_state = STATE_INR_WP_START; }  // 记录航点 → 记录流程 (首次KEY4取消闭环, 之后才是正式记录; 重进先清内存航点防残留)
             else if (menu_index == 1) { set_num = 1; set_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_SET_WP_COUNT; }  // 设置航点数量 → 调整页 (num初始可见)
             else if (menu_index == 2) { launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_LAUNCH_ENABLE; }          // 发车区航点设置 → 启用页 (是/否初始可见)
-            else { menu_state = STATE_INR_CLEAR_DONE; auto_back_tick = menu_tick_10ms; }                      // 清除历史数据 → 提示1s
+            else {
+                FlashStore_ClearAll();       // 清 W25Q64: 航点地图 + 设置(航点数量/发车区启用标志)
+                Inav_ResetMap();             // 清内存航点
+                wp_set = 1; launch_enable = 0; launch_off_x = 0; launch_off_y = 0;  // 恢复默认 (发车区标志清零)
+                Inav_UpdateMax();            // 重算 bcn_max/wp_max (=1, 无发车区)
+                printf("FLASH: all data cleared\n");
+                menu_state = STATE_INR_CLEAR_DONE;      // 数据已清除 → 提示1s
+                auto_back_tick = menu_tick_10ms;
+            }
         }
         break;
 
@@ -558,6 +594,8 @@ void App_Menu_Task(void)
         {
             key_clear_state(KEY_2);
             wp_set = set_num;                        // 正式确认航点数量
+            Inav_UpdateMax();                        // 重算 bcn_max/wp_max
+            menu_save_settings();                    // 写 W25Q64 Region2 (航点数量)
             menu_state = STATE_INR_SET_WP_DONE;
             auto_back_tick = menu_tick_10ms;         // 提示1s后回二级
         }
@@ -573,13 +611,19 @@ void App_Menu_Task(void)
         }
         break;
 
-    /* 惯导记录流程: KEY_4 开始/结束, 按已确认航点数 wp_set 循环 (纯显示, 控制逻辑后续接入) */
+    /* 惯导记录流程: 第一次KEY_4取消闭环(车可自由推动摆车头), 之后 KEY_4 开始/结束记录, 按已确认航点数 wp_set 循环 */
     case STATE_INR_WP_START:
         k = key_get_state(KEY_4);
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_4);
-            menu_state = STATE_INR_WP_REC;     // 开始记录当前航点
+            if (!rec_cancel_done) {
+                Inav_DisableControl();   // 第一次按键4: 取消闭环 (PID全关+PWM清零), 车可自由推动
+                rec_cancel_done = 1;
+            } else {
+                Inav_RecStart();         // 从第二次起: 正式开始记录当前航点
+                menu_state = STATE_INR_WP_REC;
+            }
         }
         break;
 
@@ -588,8 +632,15 @@ void App_Menu_Task(void)
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_4);
-            if (wp_cur < wp_set - 1) { wp_cur++; menu_state = STATE_INR_WP_START; }                         // 还有下一个航点
-            else { menu_state = STATE_INR_WP_DONE; auto_back_tick = menu_tick_10ms; }                        // 所有航点记录完毕 (提示1s后回主菜单)
+            Inav_RecEnd();               // 结束记录当前航点 (存 bcn_abs[bcn_idx++])
+            if (wp_cur < wp_set - 1) { wp_cur++; menu_state = STATE_INR_WP_START; }   // 还有下一个航点
+            else {
+                Inav_BuildMap();                                   // 全部录完: 构建导航航点 (含发车区航点)
+                FlashStore_SaveWaypoints(Inav_GetMap(), wp_set);   // 写 W25Q64 Region1 (航点地图)
+                printf("FLASH: waypoints saved (%d)\n", wp_set);
+                menu_state = STATE_INR_WP_DONE;                    // 所有航点记录完毕
+                auto_back_tick = menu_tick_10ms;                   // 1s后回二级
+            }
         }
         break;
 
@@ -607,6 +658,8 @@ void App_Menu_Task(void)
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_2);
+            Inav_UpdateMax();            // launch_enable 变化 → 重算 wp_max
+            menu_save_settings();        // 写 W25Q64 Region2 (发车区启用标志, 影响总航点计算)
             if (launch_enable) { launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_LAUNCH_OFFSET_X; }   // 启用 → 输入偏移
             else { menu_state = STATE_INR_LAUNCH_DISABLED; auto_back_tick = menu_tick_10ms; }                // 禁用 → 提示1s
         }
@@ -679,6 +732,8 @@ void App_Menu_Task(void)
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_2);
+            Inav_UpdateMax();
+            menu_save_settings();          // 写 W25Q64 Region2 (偏移xy)
             menu_state = STATE_INR_LAUNCH_DONE;                           // xy 都设好 → 完毕提示1s
             auto_back_tick = menu_tick_10ms;
         }
@@ -693,13 +748,15 @@ void App_Menu_Task(void)
         }
         break;
 
-    /* 无人机控制: 电机启动 → 起飞 → 发车 → 比赛 (KEY_2/KEY_4 推进) */
+    /* 无人机控制: 起桨 → 起飞 → 发车 → 比赛 (KEY_2/KEY_4 推进)
+     * 注: 目前接着遥控模拟, 发送指令为 // 占位注释, 恢复无人机通信后取消注释即可 */
     case STATE_UAV_Control:
         k = key_get_state(KEY_2);
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_2);
-            menu_state = STATE_UAV_TAKEOFF;    // 确认电机启动
+            //HC06_SendDroneCmd(1);   // 起桨指令 (原逻辑KEY_1发送cmd 1 / 'A', 现菜单KEY_2触发)
+            menu_state = STATE_UAV_TAKEOFF;    // 确认起桨 → 请起飞
         }
         break;
 
@@ -708,7 +765,8 @@ void App_Menu_Task(void)
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_2);
-            menu_state = STATE_UAV_DEPART;     // 确认起飞
+            //HC06_SendDroneCmd(2);   // 起飞/启动闭环指令 (原逻辑发送cmd 2 / 'B')
+            menu_state = STATE_UAV_DEPART;     // 确认起飞 → 请发车
         }
         break;
 
@@ -717,7 +775,11 @@ void App_Menu_Task(void)
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_4);
-            menu_state = STATE_UAV_RACE;       // 确认发车
+            if (Inav_Launch()) {
+                //HC06_SendDroneCmd(4);   // 通知无人机已发车 (原逻辑发车时发送cmd 4 / 'D')
+                menu_state = STATE_UAV_RACE;       // 武装成功 → 已发车/开始比赛
+            }
+            // 武装失败 (航点未录齐): 停留在本页, 串口已打印原因, 菜单无提示
         }
         break;
 
@@ -736,17 +798,18 @@ void App_Menu_Task(void)
         menu_state = STATE_MAIN;
     }
 
-    /* 4. 自动返回: 提示页 1s 后自动跳回 (数据已清除/航点数设置完成/发车区已禁用/发车区设置完毕→惯导二级; 航点完毕/任务已停止→主菜单) */
+    /* 4. 自动返回: 提示页 1s 后自动跳回
+     *    数据已清除/航点数设置完成/发车区已禁用/发车区设置完毕/所有航点记录完毕 → 惯导二级
+     *    停止所有控制任务 → 主菜单 */
     if (menu_state == STATE_INR_CLEAR_DONE || menu_state == STATE_INR_SET_WP_DONE || menu_state == STATE_INR_WP_DONE || menu_state == STATE_Stop_All_Control
         || menu_state == STATE_INR_LAUNCH_DISABLED || menu_state == STATE_INR_LAUNCH_DONE)
     {
         if (menu_tick_10ms - auto_back_tick >= MENU_AUTO_BACK_TICKS)
         {
-            if (menu_state == STATE_INR_CLEAR_DONE || menu_state == STATE_INR_SET_WP_DONE
-             || menu_state == STATE_INR_LAUNCH_DISABLED || menu_state == STATE_INR_LAUNCH_DONE)
-                menu_state = STATE_Internal_Nav_Record;
-            else
+            if (menu_state == STATE_Stop_All_Control)
                 menu_state = STATE_MAIN;
+            else
+                menu_state = STATE_Internal_Nav_Record;   // 含 STATE_INR_WP_DONE: 所有航点记录完毕也回二级
         }
     }
 }

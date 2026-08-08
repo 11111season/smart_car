@@ -10,12 +10,10 @@
 
 #include "inertial_nav.h"
 #include "QMC5883L.h"
+#include "App_menu.h"     // 菜单全局: wp_set/launch_enable/launch_off_x/y (W25Q64掉电存储覆盖)
 
 /*==================================================== 编译开关 ====================================================*/
-#define INAV_MODE  1   // 0=五信标链式循环  1=双航点巡逻
-#define WP3_ENABLE 0   // 1=启用硬编码第三航点  0=仅用录制航点
-#define WP3_X      1.0f // 硬编码航点X坐标(m)
-#define WP3_Y      0.0f // 硬编码航点Y坐标(m)
+#define INAV_MODE  1   // 0=五信标链式循环  1=航点巡逻
 
 /*==================================================== 编码器 ====================================================*/
 #define BCN_ENC_CALIB  4.30f
@@ -32,29 +30,23 @@ static int32_t enc_delta(int32_t e0[4]) {
 }
 
 /*==================================================== 信标坐标 ====================================================*/
-typedef struct { float x, y; } pt_t;
+typedef flash_wp_t pt_t;   // 航点坐标 (与 W25Q64 存储 flash_wp_t 同布局)
 
-#if INAV_MODE == 0
-  #define BCN_MAX  5
-  #define WP_MAX   (BCN_MAX + 1)   // 5信标 + 1中心
-#else
-  #define BCN_MAX  2                                  // 记录2个航点
-  #if WP3_ENABLE
-    #define WP_MAX 3                                   // 3个航点: 录制2个 + WP3硬编码
-  #else
-    #define WP_MAX (BCN_MAX)                           // 仅录制航点, 无硬编码
-  #endif
-#endif
+/* 航点上限为运行时变量 (原编译期宏 BCN_MAX/WP_MAX 废弃):
+ *   bcn_max = 菜单设置的航点数量 (不含发车区) = wp_set
+ *   wp_max  = bcn_max + launch_enable  (启用发车区则 +1 发车区航点)
+ * 上电从 W25Q64 读设置覆盖, 数组按物理上限 FLASH_WP_MAX 开 */
+uint8_t bcn_max = 2;                          // 记录航点数 (不含发车区)
+uint8_t wp_max  = 2;                          // 总航点数 (含发车区)
 
-
-static pt_t    bcn_abs[BCN_MAX];
+static pt_t    bcn_abs[FLASH_WP_MAX];         // 录制航点 (最多9)
 static pt_t    bcn_pos;
 static uint8_t bcn_idx = 0;
 static pt_t    bcn_center;
 
-static pt_t    wp_abs[WP_MAX];
-static float   wp_dist[WP_MAX];
-static float   wp_yaw[WP_MAX];
+static pt_t    wp_abs[FLASH_WP_MAX + 1];      // 最终导航航点 (录制 + 发车区)
+static float   wp_dist[FLASH_WP_MAX + 1];
+static float   wp_yaw[FLASH_WP_MAX + 1];
 static uint8_t wp_idx = 0;
 static pt_t    seg_start;
 
@@ -65,7 +57,6 @@ static pt_t    seg_start;
 enum { BCN_IDLE, BCN_RECORD, BCN_DONE, BCN_GO };
 static uint8_t  bcn_state    = BCN_IDLE;
 static float    bcn_yaw      = 0.0f;
-static float    bcn_dist_m   = 0.0f;
 static int32_t  bcn_enc0[4]  = {0};
 uint16_t bcn_debounce = 0;
 static uint64_t bcn_pause_start_us = 0;  // 段间暂停开始时刻 (微秒)
@@ -210,40 +201,38 @@ void InertialNav_PosUpdate(void)
 /*==================================================== 计算中心+航点 ====================================================*/
 static void bcn_build_waypoints(void)
 {
-    // 打印所有信标
-    for (int i = 0; i < BCN_MAX; i++) {
+    // 打印所有录制航点
+    for (int i = 0; i < bcn_max; i++) {
         printf("INAV: B%d(%.2f,%.2f)\n", i+1, bcn_abs[i].x, bcn_abs[i].y);
     }
 
 #if INAV_MODE == 0
     // 模式0: 五信标 → 几何中心 + 链式航点
     float sx = 0.0f, sy = 0.0f;
-    for (int i = 0; i < BCN_MAX; i++) { sx += bcn_abs[i].x; sy += bcn_abs[i].y; }
-    bcn_center.x = sx / (float)BCN_MAX;
-    bcn_center.y = sy / (float)BCN_MAX;
+    for (int i = 0; i < bcn_max; i++) { sx += bcn_abs[i].x; sy += bcn_abs[i].y; }
+    bcn_center.x = sx / (float)bcn_max;
+    bcn_center.y = sy / (float)bcn_max;
     printf("INAV: CENTER(%.2f,%.2f)\n", bcn_center.x, bcn_center.y);
-    for (int i = 0; i < BCN_MAX; i++) wp_abs[i] = bcn_abs[i];
-    wp_abs[BCN_MAX] = bcn_center;
+    for (int i = 0; i < bcn_max; i++) wp_abs[i] = bcn_abs[i];
+    wp_abs[bcn_max] = bcn_center;
+    wp_max = bcn_max + 1;
 #else
-    // 模式1: 录制航点 + 可选硬编码WP3
-    wp_abs[0] = bcn_abs[0];
-    wp_abs[1] = bcn_abs[1];
-#if WP3_ENABLE
-    wp_abs[2].x = WP3_X; wp_abs[2].y = WP3_Y;   // WP3: 发车区正前方0.5m
-    printf("INAV: WP1(%.2f,%.2f) WP2(%.2f,%.2f) WP3(%.2f,%.2f)\n",
-           wp_abs[0].x, wp_abs[0].y,
-           wp_abs[1].x, wp_abs[1].y,
-           wp_abs[2].x, wp_abs[2].y);
-#else
-    printf("INAV: WP1(%.2f,%.2f) WP2(%.2f,%.2f)\n",
-           wp_abs[0].x, wp_abs[0].y,
-           wp_abs[1].x, wp_abs[1].y);
-#endif
+    // 模式1: 录制航点 + 可选发车区航点 (WP_MAX = bcn_max + launch_enable)
+    for (int i = 0; i < bcn_max; i++) wp_abs[i] = bcn_abs[i];
+    if (launch_enable) {
+        // 发车区航点 = 起点(世界原点) + 菜单偏移; 世界系 x=前 y=左 (与 g_pos 一致)
+        wp_abs[bcn_max].x = (float)launch_off_x * 0.1f;
+        wp_abs[bcn_max].y = (float)launch_off_y * 0.1f;
+        printf("INAV: LAUNCH wp(%.2f,%.2f)\n", wp_abs[bcn_max].x, wp_abs[bcn_max].y);
+    }
+    printf("INAV: %d wp:", wp_max);
+    for (int i = 0; i < wp_max; i++) printf(" (%.2f,%.2f)", wp_abs[i].x, wp_abs[i].y);
+    printf("\n");
 #endif
 
     // 预计算每段距离和方向
     pt_t prev = {0.0f, 0.0f};
-    for (int i = 0; i < WP_MAX; i++) {
+    for (int i = 0; i < wp_max; i++) {
         float dx = wp_abs[i].x - prev.x;
         float dy = wp_abs[i].y - prev.y;
         wp_dist[i] = sqrtf(dx * dx + dy * dy);
@@ -285,106 +274,161 @@ static void bcn_start_cycle(void)
 }
 #endif
 
-/*==================================================== KEY_4 ====================================================*/
-void InertialNav_KeyHandler(void)
+/*==================================================== 菜单控制接口 ====================================================*/
+// 说明: 原 InertialNav_KeyHandler (KEY_4 记录流程) 已由菜单接管, 废弃删除
+// KEY_3 始终为退回主菜单, 故取消闭环放在记录页首次 KEY_4 (见 App_Menu STATE_INR_WP_START)
+
+// 取消闭环: PID全关 + PWM清零 (记录前让小车可自由推动车头)
+void Inav_DisableControl(void)
 {
-    if (key_get_state(KEY_4) != KEY_SHORT_PRESS) return;
-    if (bcn_debounce > 0) return;
-    bcn_debounce = 80;
+    Motor_Enable_PID(0);
+    PID_Enable(&angle_pid_yaw, 0);
+    PID_Enable(&angle_pid_gyro, 0);
+    bcn_nav_on = 0;
+    target_vx = 0.0f; target_vy = 0.0f;
+    Motor_SetSpeed(&motor_L1,0,MotorL1_Turn,MotorL1_Pwm);
+    Motor_SetSpeed(&motor_L2,0,MotorL2_Turn,MotorL2_Pwm);
+    Motor_SetSpeed(&motor_R1,0,MotorR1_Turn,MotorR1_Pwm);
+    Motor_SetSpeed(&motor_R2,0,MotorR2_Turn,MotorR2_Pwm);
+    printf("INAV: closed-loop off, car free to push\n");
+}
 
-    switch (bcn_state) {
-
-    case BCN_IDLE:
-        if (bcn_idx >= BCN_MAX) {
-#if INAV_MODE == 0
-            if (!mission_armed) {
-                bcn_start_cycle();       // 五信标记录完毕, 开始循环导航
-            }
-#else
-            if (!mission_armed) {
-                // 2个航点已记录完毕, 武装任务, 等3.5s无人机就位后执行
-                mission_armed = 1;
-                mission_arm_time = time_us;
-                HC06_SendDroneCmd(4);           // 通知无人机: 小车已发车 #D$
-                printf("INAV: Mission armed, waiting 3.5s for drone...\n");
-                angle_target = 0.0f;
-                target_vx = 0.0f; target_vy = 0.0f;
-                Motor_Enable_PID(1);
-                PID_Reset(&angle_pid_yaw);   PID_Enable(&angle_pid_yaw, 1);
-                PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
-                g_pos_x = 0.0f; g_pos_y = 0.0f;
-                go_center = 0;
-                My_Imu660ra_ResetYaw();
-                //MagYaw_Reset();   // 2026-08-07: 磁力计融合暂关, 用陀螺仪+零漂
-                bcn_debounce = 80;
-                printf("INAV: Mission armed, waiting for drone flag...\n");
-            }
-#endif
-            // 已武装: 不再重复操作
-        } else {
-            // 开始记录信标: PID全关 + PWM清零
+// 开始记录当前航点: 记编码器起点 + 当前航向
+// mode 1: 每个航点从原点(发车区)开始独立记录, bcn_pos 清零
+void Inav_RecStart(void)
+{
+    Motor_Enable_PID(0);
+    PID_Enable(&angle_pid_yaw, 0);
+    PID_Enable(&angle_pid_gyro, 0);
+    bcn_nav_on = 0;
+    Motor_SetSpeed(&motor_L1,0,MotorL1_Turn,MotorL1_Pwm);
+    Motor_SetSpeed(&motor_L2,0,MotorL2_Turn,MotorL2_Pwm);
+    Motor_SetSpeed(&motor_R1,0,MotorR1_Turn,MotorR1_Pwm);
+    Motor_SetSpeed(&motor_R2,0,MotorR2_Turn,MotorR2_Pwm);
 #if INAV_MODE == 1
-            bcn_pos.x = 0.0f; bcn_pos.y = 0.0f;  // mode 1: 独立坐标, 每个航点从原点开始
+    bcn_pos.x = 0.0f; bcn_pos.y = 0.0f;   // mode 1: 独立坐标, 每个航点从原点开始
 #endif
-            // mode 0: 链式累积, bcn_pos 不重置 (B1=原点→B1, B2=B1→B2, ...)
-            Motor_Enable_PID(0);
-            PID_Enable(&angle_pid_yaw, 0);
-            PID_Enable(&angle_pid_gyro, 0);
-            bcn_nav_on = 0;
-            Motor_SetSpeed(&motor_L1,0,MotorL1_Turn,MotorL1_Pwm);
-            Motor_SetSpeed(&motor_L2,0,MotorL2_Turn,MotorL2_Pwm);
-            Motor_SetSpeed(&motor_R1,0,MotorR1_Turn,MotorR1_Pwm);
-            Motor_SetSpeed(&motor_R2,0,MotorR2_Turn,MotorR2_Pwm);
-            bcn_enc0[0] = motor_L1.total_encoder;
-            bcn_enc0[1] = motor_L2.total_encoder;
-            bcn_enc0[2] = motor_R1.total_encoder;
-            bcn_enc0[3] = motor_R2.total_encoder;
-            bcn_yaw = My_Imu660ra_GetYaw();   // 与PosUpdate同用陀螺仪yaw
-            bcn_state = BCN_RECORD;
-            printf("INAV: B%d record start, yaw=%.1f\n", bcn_idx + 1, bcn_yaw);
-        }
-        break;
+    // mode 0: 链式累积, bcn_pos 不重置 (B1=原点→B1, B2=B1→B2, ...)
+    bcn_enc0[0] = motor_L1.total_encoder;
+    bcn_enc0[1] = motor_L2.total_encoder;
+    bcn_enc0[2] = motor_R1.total_encoder;
+    bcn_enc0[3] = motor_R2.total_encoder;
+    bcn_yaw = My_Imu660ra_GetYaw();   // 与PosUpdate同用陀螺仪yaw
+    printf("INAV: B%d record start, yaw=%.1f\n", bcn_idx + 1, bcn_yaw);
+}
 
-    case BCN_RECORD:
-        bcn_dist_m = enc2m(enc_delta(bcn_enc0));
-        {
-            // 链式累积绝对坐标
-            float rad = bcn_yaw * (PI / 180.0f);
-            bcn_pos.x += bcn_dist_m * cosf(rad);
-            bcn_pos.y += bcn_dist_m * sinf(rad);
-            bcn_abs[bcn_idx] = bcn_pos;
-        }
-        printf("INAV: B%d dist=%.2fm abs(%.2f,%.2f)\n",
-               bcn_idx + 1, bcn_dist_m, bcn_abs[bcn_idx].x, bcn_abs[bcn_idx].y);
+// 结束记录当前航点: 按编码器位移 + 记录起始航向累积绝对坐标 → 存 bcn_abs[bcn_idx++]
+void Inav_RecEnd(void)
+{
+    if (bcn_idx >= bcn_max) return;   // 超出设置数量: 忽略
+    float dist = enc2m(enc_delta(bcn_enc0));
+    float rad  = bcn_yaw * (PI / 180.0f);
+    bcn_pos.x += dist * cosf(rad);
+    bcn_pos.y += dist * sinf(rad);
+    bcn_abs[bcn_idx] = bcn_pos;
+    printf("INAV: B%d dist=%.2fm abs(%.2f,%.2f)\n",
+           bcn_idx + 1, dist, bcn_abs[bcn_idx].x, bcn_abs[bcn_idx].y);
+    bcn_idx++;
+}
 
+// 全部录完: bcn_abs → wp_abs (含发车区航点) + 预计算每段距离/方向
+void Inav_BuildMap(void)
+{
+    Inav_UpdateMax();
+    bcn_build_waypoints();
+}
+
+// 读当前录制航点地图 (用于存 W25Q64)
+const flash_wp_t* Inav_GetMap(void) { return bcn_abs; }
+
+// 重算 bcn_max/wp_max (菜单设置变化后调用)
+void Inav_UpdateMax(void)
+{
+    if (wp_set < 1)   wp_set = 1;
+    if (wp_set > FLASH_WP_MAX) wp_set = FLASH_WP_MAX;
+    bcn_max = wp_set;
+    wp_max  = bcn_max + (launch_enable ? 1 : 0);
+    if (wp_max > FLASH_WP_MAX + 1) wp_max = FLASH_WP_MAX + 1;
+}
+
+// 上电载入: 从 W25Q64 读设置(init.c 已写入菜单全局) + 航点地图 → 设上限 + 构建导航航点
+void Inav_LoadMap(void)
+{
+    flash_wp_t wp[FLASH_WP_MAX];
+    uint8_t n = FlashStore_LoadWaypoints(wp, FLASH_WP_MAX);
+
+    Inav_UpdateMax();     // bcn_max = wp_set, wp_max = bcn_max + launch_enable
+
+    bcn_idx = 0;
+    for (uint8_t i = 0; i < n; i++) {
+        if (i >= bcn_max) break;   // 只装载设置数量以内
+        bcn_abs[i] = wp[i];
         bcn_idx++;
-        if (bcn_idx >= BCN_MAX) {
-            bcn_build_waypoints();
-            printf("INAV: press KEY_4 to GO\n");
-        }
-        bcn_state = BCN_IDLE;
-        bcn_nav_on = 0;
-        bcn_debounce = 20;   // 缩短消抖
-        break;
-
-    case BCN_GO:
-        // 已在导航中: 强制停止
-        Motor_Enable_PID(0);
-        PID_Enable(&angle_pid_yaw, 0);
-        PID_Enable(&angle_pid_gyro, 0);
-        target_vx = 0.0f; target_vy = 0.0f;
-        bcn_nav_on = 0;
-        bcn_rem_i = 0.0f; bcn_go_first = 1;
-        bcn_state = BCN_IDLE;
-        bcn_idx = 0;
-        bcn_pos.x = 0.0f; bcn_pos.y = 0.0f;
-        printf("INAV: force stop\n");
-        break;
-
-    case BCN_DONE:
-        break;
     }
-    key_clear_state(KEY_4);
+    bcn_pos.x = 0.0f; bcn_pos.y = 0.0f;
+    if (bcn_idx > 0) bcn_build_waypoints();
+    printf("INAV: map loaded (%d wp), bcn_max=%d wp_max=%d\n", bcn_idx, bcn_max, wp_max);
+}
+
+// 清除历史: 清空内存航点 (W25Q64 由调用方 FlashStore_ClearAll)
+void Inav_ResetMap(void)
+{
+    bcn_idx = 0;
+    bcn_pos.x = 0.0f; bcn_pos.y = 0.0f;
+    bcn_state = BCN_IDLE;
+    patrol_active = 0;
+    bcn_nav_on = 0;
+    printf("INAV: map reset\n");
+}
+
+// 航点是否录齐 (达到设置数量)
+uint8_t Inav_CanLaunch(void)
+{
+    return (bcn_idx >= bcn_max) ? 1 : 0;
+}
+
+// 武装发车: mission_armed=1 + 记发车时刻 + 开闭环 + 复位原点/航向
+// 3.5s 延迟由 PositionControl_Update / 巡逻触发条件处理; 发车区航点为 wp_abs[bcn_max]
+uint8_t Inav_Launch(void)
+{
+    if (!Inav_CanLaunch()) {
+        printf("INAV: launch denied, only %d/%d wp recorded\n", bcn_idx, bcn_max);
+        return 0;
+    }
+    mission_armed = 1;
+    mission_arm_time = time_us;
+    printf("INAV: Mission armed, waiting 3.5s for drone...\n");
+    angle_target = 0.0f;
+    target_vx = 0.0f; target_vy = 0.0f;
+    Motor_Enable_PID(1);
+    PID_Reset(&angle_pid_yaw);   PID_Enable(&angle_pid_yaw, 1);
+    PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
+    g_pos_x = 0.0f; g_pos_y = 0.0f;
+    go_center = 0;
+    bcn_nav_on = 0;
+    patrol_active = 0;
+    My_Imu660ra_ResetYaw();
+    //MagYaw_Reset();   // 2026-08-07: 磁力计融合暂关, 用陀螺仪+零漂
+    return 1;
+}
+
+// 停止所有控制任务: 关闭环 + 零速 + 停桨(发3) + 完赛级锁定
+// 与 race_done 同级: 后续不执行任何指令, 断电重启刷新状态
+void Inav_StopAll(void)
+{
+    Motor_Enable_PID(0);
+    PID_Enable(&angle_pid_yaw, 0);
+    PID_Enable(&angle_pid_gyro, 0);
+    target_vx = 0.0f; target_vy = 0.0f;
+    bcn_nav_on = 0;
+    patrol_active = 0;
+    Motor_SetSpeed(&motor_L1,0,MotorL1_Turn,MotorL1_Pwm);
+    Motor_SetSpeed(&motor_L2,0,MotorL2_Turn,MotorL2_Pwm);
+    Motor_SetSpeed(&motor_R1,0,MotorR1_Turn,MotorR1_Pwm);
+    Motor_SetSpeed(&motor_R2,0,MotorR2_Turn,MotorR2_Pwm);
+    HC06_SendDroneCmd(3);       // 停桨指令 (占位: 当前遥控模拟, 恢复无人机通信后生效)
+    race_done = 1;              // 与完赛同级: 小车将不执行任何指令, 断电重启刷新
+    printf("INAV: STOP ALL, locked (race_done=1)\n");
 }
 
 /*==================================================== 主循环更新 ====================================================*/
@@ -398,7 +442,7 @@ void InertialNav_Update(void)
     if (mission_armed && time_us - mission_arm_time >= 3500000
         && flag2_count >= FLAG2_DEBOUNCE && !patrol_active && bcn_debounce == 0) {
         float d_min = 1e9f;
-        for (int i = 0; i < WP_MAX; i++) {
+        for (int i = 0; i < wp_max; i++) {
             float d = sqrtf((wp_abs[i].x-g_pos_x)*(wp_abs[i].x-g_pos_x) +
                             (wp_abs[i].y-g_pos_y)*(wp_abs[i].y-g_pos_y));
             if (d < d_min) { d_min = d; patrol_wp = (uint8_t)i; }
@@ -426,7 +470,7 @@ void InertialNav_Update(void)
                 printf("INAV: Arrived wp%d, waiting 3s...\n", patrol_wp+1);
             }
             if (time_us - patrol_arrive_us >= PATROL_WAIT_US) {
-                patrol_wp = (patrol_wp + 1) % WP_MAX;   // 顺序循环 0→1→2→0
+                patrol_wp = (patrol_wp + 1) % wp_max;   // 顺序循环
                 patrol_arrive_us = 0;
                 printf("INAV: No beacon, switch to wp%d\n", patrol_wp+1);
             }
@@ -491,7 +535,7 @@ void InertialNav_Update(void)
                wp_idx, err_dist, cur.x, cur.y);
         wp_idx++;
 
-        if (wp_idx >= WP_MAX) {
+        if (wp_idx >= wp_max) {
             // 循环: 回到第一个航点, 等2秒后继续
             wp_idx = 0;
             seg_start.x = 0.0f; seg_start.y = 0.0f;
