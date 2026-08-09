@@ -34,7 +34,9 @@ int main(void)
         InertialNav_Update();
         //W25Q64_Test();               // 掉电存储通路测试 (写读回比对). 掉电持久化测试期间注释 — 它每轮会先擦扇区0, 会把要验证的数据冲掉!
         //W25Q64_Persist_Test();       // 2026-08-08: 存储模块已接管 (w25q64_storage 两个分区), 且0x000000现为航点地图区, 旧测试读它会误报
-        App_Menu_Task();               // 菜单显示任务
+        App_Menu_Task();               // 菜单显示任务 (2026-08-09 下地实测: 恢复)
+        //Test_QuickLaunch();          // 零漂测量实验脚手架 (已废弃, 保留注释)
+        //Drift_Measure_Test();        // 零漂测量实验脚手架 (已废弃, 保留注释)
         //HC06_Task();                 // 485/蓝牙接收暂用 (LoRa模拟无人机期间注释)
 #if !MAG_CALIB_MODE
         App_Lora_Task();               // LoRa遥控器模拟无人机 (校准期间关闭, 避免污染磁力计数据)

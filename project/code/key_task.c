@@ -25,11 +25,12 @@
 
 void KeyTask_Init(void)
 {
+    // 2026-08-09 下地实测惯导: 恢复闭环 (架高验证时注释的PID使能全部恢复)
     Motor_Enable_PID(1);
     PID_Reset(&angle_pid_yaw);   PID_Enable(&angle_pid_yaw, 1);
     PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
     My_Imu660ra_ResetYaw();
-    //MagYaw_Reset();                      // 磁力计零点 (2026-08-07: 磁力计暂关, 用陀螺仪+零漂)
+    MagYaw_Reset();   // 磁力计融合零点: 当前方向=0° (记录/导航统一坐标系)
     angle_target = 0.0f;
     target_vx  = 0.0f;
     target_vy  = 0.0f;
@@ -38,6 +39,15 @@ void KeyTask_Init(void)
 
 void KeyTask_Handler(void)
 {
+#if MAG_CALIB_MODE && MAG_CALIB_MOTOR_TEST == 1
+    // 电机磁场干扰测试模式: KEY4 开始/结束 PWM缓变 (菜单控制链路下, 测试需要独立按键入口)
+    qmc5883l_motor_test_key_handler();
+    return;
+#elif MAG_CALIB_MODE && MAG_CALIB_MOTOR_TEST == 0
+    // 椭圆标定模式: KEY4 开始/结束采集 (菜单控制链路下, 标定需要独立按键入口)
+    qmc5883l_calibration_key_handler();
+    return;
+#endif
 #if 0
     // 2026-08-07: 按键逻辑整体关闭, 控制链路重构到 App_Menu 菜单, 所有按键由菜单统一处理
     // 2026-08-08: InertialNav_KeyHandler 已删除 (KEY_4 记录流程迁移到菜单 STATE_INR_WP_START/REC)

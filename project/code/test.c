@@ -206,10 +206,17 @@ void Mag_Yaw_Verify(void)
     last_t = time_us;
 
     qmc5883l_get_all();
-    printf("Y:%.1f,F:%.1f,G:%.1f,mx:%d,my:%d\n",
+    // D = 磁航向Y − 陀螺航向G (±180环绕): 静止时反映安装方向固定偏差(应恒定),
+    // 转动中D的波动 = 磁力计受扰/架体晃动幅度 (2026-08-09架高验证新增)
+    float g = My_Imu660ra_GetYaw();
+    float d = qmc5883l_heading - g;
+    while (d >  180.0f) d -= 360.0f;
+    while (d < -180.0f) d += 360.0f;
+    printf("Y:%.1f,F:%.1f,G:%.1f,D:%+.1f,mx:%d,my:%d\n",
            qmc5883l_heading,   // 磁力计绝对航向 (0-360)
            fused_yaw,          // 磁力计+陀螺互补融合 (相对零点)
-           My_Imu660ra_GetYaw(), // 陀螺纯积分 (含零漂补偿)
+           g,                  // 陀螺纯积分 (含零漂补偿)
+           d,                  // 磁-陀偏差: 固定偏差=安装关系, 波动=干扰
            qmc5883l_mag_x,     // 原始X counts (抓尖峰诊断用)
            qmc5883l_mag_y      // 原始Y counts (抓尖峰诊断用)
     );
@@ -641,4 +648,58 @@ void W25Q64_Persist_Test(void)
             break;
     }
 #endif
+}
+
+//-------------------------------------------------------------------------------------------------------------------
+// 零漂测量实验: 悬空架车跑惯导, CSV 抓原始陀螺漂移
+// 前提:   cm7_0_isr.c DRIFT_LEARN_ENABLE=0 (禁用 ISR 侧零漂学习, 仅保留 IMU 静态学习)
+// 用法:   上电 → 静止几秒 (静态学习收敛) → 菜单发车 (悬空/桌面) → 跑 4~5 分钟
+//         Python 抓串口, 过滤以 "DBG," 开头的行即可
+// 数据:   每 100ms 一行 (主循环限频, 不在 ISR, 不阻塞中断)
+//         DBG,<t_ms>,<yaw>,<z_off>,<err_int>,<comp>,<gz>
+//         yaw    = 陀螺积分航向 (发车 ResetYaw 归零, 偏离量=纯漂移)   [核心]
+//         z_off  = 在线零偏 gyro_z_offset (运动期应冻结)             [理论验证]
+//         err_int= 角度环积分 (comp 原本会吸收的量, 诊断用)           [诊断]
+//         comp   = yaw_drift_comp (禁用后应恒为 0, 验证生效)          [诊断]
+//         gz     = 滤波前 Z 角速度 (°/s)                             [诊断]
+// 调用:   主循环连续调用 (内部门控于 mission_armed + 限频)
+//-------------------------------------------------------------------------------------------------------------------
+#define DRIFT_PRINT_PERIOD_US  100000UL   // 100ms 一条
+
+void Drift_Measure_Test(void)
+{
+    static uint64_t last_t = 0;
+    if (!mission_armed) return;                          // 仅发车后打印
+    if (time_us - last_t < DRIFT_PRINT_PERIOD_US) return;
+    last_t = time_us;
+
+    printf("DBG,%lu,%.2f,%.3f,%.1f,%.2f,%.2f\n",
+           (unsigned long)(time_us / 1000),
+           My_Imu660ra_GetYaw(),        // 陀螺积分航向 (无ISR补偿)
+           gyro_z_offset,               // 在线零偏
+           angle_pid_yaw.err_int_k_1,   // 角度环积分
+           yaw_drift_comp,              // 漂移补偿 (应恒0)
+           imu660_gz);                  // Z角速度 (°/s)
+}
+
+//-------------------------------------------------------------------------------------------------------------------
+// 零漂测量实验: KEY_1 绕过菜单直接发车
+// 前提:   App_Menu_Init / App_Menu_Task 已注释 (屏幕未接, 烧录器占用)
+// 行为:   按下 KEY_1 → 从 W25Q64 重读地图 (幂等) → Inav_Launch 武装发车
+//         mission_armed=1 后 3.5s, 巡逻自动触发 (InertialNav_Update 内部判断)
+//         Drift_Measure_Test 同步开始打 DBG
+// 调用:   主循环连续调用 (发车后 mission_armed=1, 自动忽略后续按键)
+//-------------------------------------------------------------------------------------------------------------------
+void Test_QuickLaunch(void)
+{
+    if (mission_armed) return;                     // 已发车, 忽略后续按键
+    if (key_get_state(KEY_1) == KEY_SHORT_PRESS) {
+        key_clear_state(KEY_1);
+        Inav_LoadMap();                            // 从 W25Q64 重读地图 (幂等)
+        if (Inav_Launch()) {
+            printf("TEST: KEY1 launch, 3.5s to patrol\n");
+        } else {
+            printf("TEST: launch denied (map not ready?)\n");
+        }
+    }
 }

@@ -81,21 +81,27 @@ uint8_t patrol_active = 0;              // 巡逻模式激活标志, ISR可清�
 
 /*==================================================== 磁力计融合 ====================================================*/
 static float mag_offset = 0.0f;    // yaw零点偏移
+static float mag_fy = 0.0f;        // 融合绝对航向(0-360), 与 mag_offset 配套
 
-void MagYaw_Reset(void) {          // 外部调用: 设当前方向为0度
+void MagYaw_Reset(void) {          // 外部调用: 设当前方向为0度 (发车/记录起点)
     qmc5883l_get_all();
+    // 同时对齐融合内部状态与磁力计 → fused_yaw 立即精确为0
+    // (只改 mag_offset 会留下 fy 与 mag 之间的残余差, 发车瞬间世界系有残差)
     mag_offset = qmc5883l_heading;
+    mag_fy     = qmc5883l_heading;
 }
 
-// 互补滤波: α=0.98 陀螺仪, (1-α)=0.02 磁力计
+// 互补滤波: α=0.98 陀螺仪, (1-α)=0.02 磁力计 (2026-08-09 架构: 磁力计=实时绝对基准)
+// 磁力计权重恒定: 架高20cm/距电机15cm动态实测 EM中心偏移-1.9°(可忽略), 全程信任磁力计
+// 不再有运动门控 — 需要实时绝对基准持续修正陀螺积分, 航点停靠锚定已废弃
+#define MAG_YAW_WEIGHT  0.02f   // 每20ms磁力计修正权重: 修正时间常数≈1s
 void MagYaw_Update(void)
 {
-    static float fy = 0.0f;
     static uint8_t init = 0;
     static uint8_t skip_cnt = 0;
 
     float gz = imu660_gz;
-    fy += gz * 0.01f;
+    mag_fy += gz * 0.01f;
 
     // 磁力计每20ms读一次 (QMC5883L 100Hz采样 + 512过采样, 10ms读可能读到新旧混合)
     // 融合计算仍每10ms执行, 磁力计修正隔帧更新
@@ -105,7 +111,7 @@ void MagYaw_Update(void)
         qmc5883l_get_all();
         float mag = qmc5883l_heading;
 
-        if (!init) { fy = mag; init = 1; }
+        if (!init) { mag_fy = mag; init = 1; }
 
         // 磁力计跳变保护: 相邻采样角差超过阈值视为异常尖峰
         // 用±180环绕后的最短角差, 区分过零(359→1的diff=2)与尖峰(57→6的diff=-50)
@@ -131,30 +137,21 @@ void MagYaw_Update(void)
         }
         mag_prev = mag;
 
-        float diff = mag - fy;
+        float diff = mag - mag_fy;
         while (diff >  180.0f) diff -= 360.0f;
         while (diff < -180.0f) diff += 360.0f;
 
-        // ---- 磁力计权重门控: 电机运动时磁力计被严重干扰 ----
-        // 实测(遥控运动): 电机转时Y摆动±180°, 融合被拖偏30°+ → 运动时必须关磁力计
-        // 静止时Y稳定(±2°), 磁力计恢复校正锚定绝对航向
-        // 阈值单位: 编码器脉冲/10ms, 4轮求和 (静止噪声<8, 0.05m/s约90/轮)
-        #define MAG_GATE_ON   25
-        #define MAG_GATE_OFF  8
-        static float mag_w = 0.005f;   // 带滞回: 防速度在边界抖动时权重来回跳
-        float spd = fabsf(motor_L1.encoder_speed) + fabsf(motor_L2.encoder_speed)
-                  + fabsf(motor_R1.encoder_speed) + fabsf(motor_R2.encoder_speed);
-        if      (spd > MAG_GATE_ON)        mag_w = 0.0f;    // 运动: 关磁力计
-        else if (spd < MAG_GATE_OFF)       mag_w = 0.005f;  // 静止: 开磁力计
-        // 中间带: 保持上次状态
-        fy += diff * mag_w;
+        // ---- 磁力计实时修正: 恒定权重 (2026-08-09 架构: 实时绝对基准) ----
+        // 旧门控(运动时关磁力计)已废弃: 架高动态实测电机EM干扰仅-1.9°, 无需关闭
+        // 运动/静止都信任磁力计修正陀螺积分 → 不再需要零漂学习
+        mag_fy += diff * MAG_YAW_WEIGHT;
 
-        while (fy >  360.0f) fy -= 360.0f;
-        while (fy <    0.0f) fy += 360.0f;
+        while (mag_fy >  360.0f) mag_fy -= 360.0f;
+        while (mag_fy <    0.0f) mag_fy += 360.0f;
     }
 
     // 减零点偏移 → 相对角度
-    fused_yaw = fy - mag_offset;
+    fused_yaw = mag_fy - mag_offset;
     while (fused_yaw >  180.0f) fused_yaw -= 360.0f;
     while (fused_yaw < -180.0f) fused_yaw += 360.0f;
 }
@@ -192,7 +189,9 @@ void InertialNav_PosUpdate(void)
     float dy = enc2m((int32_t)fabsf(vy)); if (vy < 0.0f) dy = -dy;
 
     // 车体系 → 世界系 (记录bcn_center的坐标系)
-    float yaw_rad = My_Imu660ra_GetYaw() * (PI / 180.0f);
+    // 用磁力计融合航向 fused_yaw: 地图坐标系跟随磁力计绝对基准, 不随陀螺积分漂移
+    // (2026-08-09 架构: 地图信任磁力计, 实时绝对修正)
+    float yaw_rad = fused_yaw * (PI / 180.0f);
     float c = cosf(yaw_rad), s = sinf(yaw_rad);
     g_pos_x += dx * c - dy * s;
     g_pos_y += dx * s + dy * c;
@@ -261,7 +260,7 @@ static void bcn_start_cycle(void)
     PID_Reset(&angle_pid_gyro);  PID_Enable(&angle_pid_gyro, 1);
     g_pos_x = 0.0f; g_pos_y = 0.0f;
     My_Imu660ra_ResetYaw();
-    //MagYaw_Reset();   // 2026-08-07: 磁力计融合暂关, 用陀螺仪+零漂
+    MagYaw_Reset();   // 2026-08-09: 发车归零磁力计融合 (与陀螺复位同步)
 
     bcn_enc0[0] = motor_L1.total_encoder;
     bcn_enc0[1] = motor_L2.total_encoder;
@@ -313,7 +312,7 @@ void Inav_RecStart(void)
     bcn_enc0[1] = motor_L2.total_encoder;
     bcn_enc0[2] = motor_R1.total_encoder;
     bcn_enc0[3] = motor_R2.total_encoder;
-    bcn_yaw = My_Imu660ra_GetYaw();   // 与PosUpdate同用陀螺仪yaw
+    bcn_yaw = fused_yaw;   // 与PosUpdate同用磁力计融合航向 (记录/导航同一坐标系)
     printf("INAV: B%d record start, yaw=%.1f\n", bcn_idx + 1, bcn_yaw);
 }
 
@@ -408,7 +407,7 @@ uint8_t Inav_Launch(void)
     bcn_nav_on = 0;
     patrol_active = 0;
     My_Imu660ra_ResetYaw();
-    //MagYaw_Reset();   // 2026-08-07: 磁力计融合暂关, 用陀螺仪+零漂
+    MagYaw_Reset();   // 2026-08-09: 发车归零磁力计融合, 车头=世界0° (与陀螺复位同步)
     return 1;
 }
 

@@ -27,3 +27,7 @@ Thumbs.db
 project/code/mag_*.py
 project/code/mag_*.txt
 project/code/mag_*.csv
+project/code/drift_*.py
+project/code/drift_*.csv
+project/code/drift_*.log
+project/code/__pycache__/

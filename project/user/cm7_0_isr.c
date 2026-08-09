@@ -52,6 +52,21 @@ volatile uint8_t send_uart_cmd_flag = 0;
 volatile uint8_t send_uart_cmd_value = 0;
 volatile uint8_t send_vel_flag = 0;        // 主循环消费: 发送目标速度给无人机
 
+// ===== 动态零偏学习参数 =====
+// 无人机/位置环从不发转向指令 (PositionControl_Update 只写 vx/vy, 自主模式 angle_target 恒0),
+// 真实转向只来自遥控右杆(ω大、angle_target大)或压信标瞬态(ω尖峰).
+// 故自主模式下持续的小 ω_target = 零漂, 反减回 gyro_z_offset, 收敛从原~28s 提到~1s.
+#define DRIFT_LEARN_K            0.01f   // 学习增益: 收敛τ≈1s (可调0.005~0.02)
+#define DRIFT_LEARN_OMEGA_GATE   3.0f    // 指令角速度门限(°/s): <3°视为零漂, 真实转舵5~30°
+#define DRIFT_LEARN_ANGLE_GATE   5.0f    // 目标角度门限(°): 仅|angle_target|<5°(自主模式)才学, 防吃掉手动锁角
+
+// ===== 零漂学习总开关 =====
+// 0 = 架构重构 (2026-08-09): 零漂学习自指回路已废弃 (悬空三跑证明参数不可调)
+//     改为磁力计作为实时绝对基准, 地图/控制环/记录统一信任 fused_yaw
+//     本开关禁用: comp累加 + 0.00003转移 + 动态学习器 (全部 ISR 侧零漂)
+//     保留: IMU 静态学习 (My_imu660ra.c, 静止时校准零偏, 标准做法)
+#define DRIFT_LEARN_ENABLE   0
+
 // **************************** PIT中断函数 ****************************
 void pit0_ch0_isr()
 {
@@ -60,7 +75,7 @@ void pit0_ch0_isr()
 
     Encoder_Data_Get();
     My_Imu660ra_Update();
-    //MagYaw_Update();                                    // 磁力计融合 (2026-08-07: 暂时注释, 用陀螺仪+零漂)
+    MagYaw_Update();                                    // 磁力计融合 (2026-08-09 架构: 实时绝对基准, 常开)
 #if MAG_CALIB_MODE && MAG_CALIB_MOTOR_TEST
     qmc5883l_motor_test_collect();                      // 电机磁场干扰测试 (KEY4触发, PWM缓变)
 #elif MAG_CALIB_MODE
@@ -101,13 +116,15 @@ void pit0_ch0_isr()
     }
 
     if (angle_pid_yaw.Enable && !race_locked) {
-        // ---- 漂移补偿: 外环积分方向=漂移方向, 极慢转移到yaw修正量 ----
-        // yaw_drift_comp 会逐渐"学会"当前的漂移累积量, 从读数中扣除
-        // PID不再需要用物理旋转去对抗一个测量误差
-        static float yaw_drift_comp = 0.0f;
+        // ---- 航向反馈: 磁力计融合航向 (2026-08-09 架构: 陀螺仪信任磁力计) ----
+        // fused_yaw = 陀螺积分 + 磁力计实时绝对修正 (恒定权重0.02, 无运动门控)
+        // 替代零漂补偿 GetYawComp: 磁力计提供绝对基准, 控制环不再依赖零漂学习
+#if DRIFT_LEARN_ENABLE
+        // (保留旧零漂代码路径, 置0时不编译)
         yaw_drift_comp -= angle_pid_yaw.err_int_k_1 * 0.0005f;
+#endif
 
-        float yaw = My_Imu660ra_GetYaw() - yaw_drift_comp;
+        float yaw = fused_yaw;
 
         // 角度环绕: 把PID目标平移到当前yaw的±180内, 使误差走最短路径
         // (否则 target=180° yaw=-180° 时 PID 误算330°误差, 舍近求远)
@@ -120,9 +137,18 @@ void pit0_ch0_isr()
         // 积分已部分转移至漂移补偿, 缓慢衰减避免双重计数
         angle_pid_yaw.err_int_k_1 *= 0.999f;
 
+#if DRIFT_LEARN_ENABLE
         // PID积分 → 陀螺零偏: 极慢 (~50x慢于yaw_drift_comp), 传感器层面修正
-        // 当积分持续偏向一侧, 说明陀螺存在零偏, 缓慢转移到gyro_z_offset
+        // 当积分持续偏向一侧, 说明陀螺存在零偏, 缓慢转移到gyro_z_offset (无门限兜底)
         gyro_z_offset -= angle_pid_yaw.err_int_k_1 * 0.00003f;
+
+        // ---- 动态零偏学习 (门限): 小角度指令=零漂, 反减回陀螺零偏 ----
+        // 稳态 ω_target ≈ (Z−B) 即残余零偏; 真实转向(右杆/压信标)ω大且angle_target大 → 门限关闭不学
+        // 收敛从原~28s 提到~1s, 追得上温度/电压引起的零偏漂移 (原0.00003保留作门限关闭时的兜底)
+        if (fabsf(angle_target) < DRIFT_LEARN_ANGLE_GATE && fabsf(omega_target) < DRIFT_LEARN_OMEGA_GATE) {
+            gyro_z_offset -= DRIFT_LEARN_K * omega_target;
+        }
+#endif
         if (gyro_z_offset >  2.0f) gyro_z_offset =  2.0f;
         if (gyro_z_offset < -2.0f) gyro_z_offset = -2.0f;
 

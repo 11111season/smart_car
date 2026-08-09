@@ -42,4 +42,12 @@ void W25Q64_Test(void);
 // 模式切换在 test.c 内 W25Q64_PERSIST_WRITE 宏 (1=写, 0=读)
 void W25Q64_Persist_Test(void);
 
+// 零漂测量实验: 悬空跑惯导, CSV 打印原始陀螺漂移 (需 cm7_0_isr.c DRIFT_LEARN_ENABLE=0)
+// 主循环连续调用, 内部门控于 mission_armed + 100ms 限频
+void Drift_Measure_Test(void);
+
+// 零漂测量实验: KEY_1 绕过菜单直接发车 (从 W25Q64 重读地图 + Inav_Launch)
+// 主循环连续调用, 发车后 mission_armed=1 自动忽略后续按键
+void Test_QuickLaunch(void);
+
 #endif /* CODE_TEST_H_ */

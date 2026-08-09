@@ -13,6 +13,7 @@ static float gx_bias = 0.0f;
 static float gy_bias = 0.0f;
 static float gz_bias = 0.0f;
 float gyro_z_offset = 0.0f;     // Z轴在线零偏 (非static, ISR可读写), 限幅±2°/s
+float yaw_drift_comp = 0.0f;    // 漂移补偿虚拟量 (非static, ISR累加, 控制环+惯导共用读取)
 // 姿态角 (度)
 static float imu660_yaw = 0.0f;
 static float imu660_pitch = 0.0f;
@@ -178,5 +179,8 @@ float My_Imu660ra_GetGx(void)   { return imu660_gx; }
 float My_Imu660ra_GetGy(void)   { return imu660_gy; }
 float My_Imu660ra_GetGz(void)   { return imu660_gz; }
 float My_Imu660ra_GetYaw(void)  { return imu660_yaw; }
+
+// 漂移补偿后的航向: 控制环与惯导共用 (惯导地图坐标系随此实时修正, 不再相对车头旋转)
+float My_Imu660ra_GetYawComp(void) { return imu660_yaw - yaw_drift_comp; }
 float My_Imu660ra_GetPitch(void) { return imu660_pitch; }
 float My_Imu660ra_GetRoll(void)  { return imu660_roll; }

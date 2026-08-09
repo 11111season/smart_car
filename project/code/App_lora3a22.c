@@ -35,6 +35,12 @@
 #define APP_YAW_K                0.015f   // = 30°/s ÷ 2047 (满推自转≈30°/s, 可调)
 #define APP_YAW_SIGN            -1.0f     // 自转方向: +1=右推顺时针, -1=反(实测左打反, 取反)
 
+// 有效命令死带: 摇杆弹簧回中不完美, 残留原始值(±80~几百) × K 产生的命令其实 <0.02m/s 几乎不动车.
+// 若按原始值判"有操作"会一直占住 flag=1 → flag2_count 不累加 → 永不转惯导巡逻 (发车不走的根因).
+// 故改用"有效命令大小"判有操作, 残留视为回中. 换算容差: 位置≈原始残留±280, 自转≈±200.
+#define APP_CMD_DEADBAND      2.0f    // 位置误差命令死带(像素): <2px → 位置环<0.02m/s, 视为回中
+#define APP_YAW_DEADBAND_DPS  3.0f    // 自转角速度死带(°/s): <3°/s 不累加目标角度, 视为回中
+
 /*==================================================== 内部状态 ====================================================*/
 static uint8_t app_lora_inited = 0;
 static uint64_t app_last_tick_us = 0;    // 上次Task调用的时间戳(微秒)
@@ -132,6 +138,20 @@ void App_Lora_Task(void)
     }
     sw0_prev = sw0;
 
+    // 读取摇杆原始值 → 死区(80) → 有效命令 (供下面 flag 判定与输出共用)
+    int16 joy0 = lora3a22_uart_transfer.joystick[0];   // 左杆X
+    int16 joy1 = lora3a22_uart_transfer.joystick[1];   // 左杆Y
+    int16 joy2 = lora3a22_uart_transfer.joystick[2];   // 右杆X
+
+    float raw_y   = app_stick_raw(joy1);   // 前后
+    float raw_x   = app_stick_raw(joy0);   // 左右
+    float raw_yaw = app_stick_raw(joy2);   // 自转
+
+    // 有效命令: 位置环 err = -GetPositionErrorX(), 符号标定见 APP_SIGN_FWD/LAT
+    float pos_err_x = raw_y   * APP_STICK_K_FWD * APP_SIGN_FWD;
+    float pos_err_y = raw_x   * APP_STICK_K_LAT * APP_SIGN_LAT;
+    float yaw_rate  = raw_yaw * APP_YAW_K       * APP_YAW_SIGN;   // °/s (与dt无关)
+
     // 遥控器链路状态判定 — 两级判"丢信标":
     //   遥控器开机后每50ms必发一帧(即使不动), 不能只靠"收不到帧"判丢信标.
     //   A. 断连: 完全收不到帧 (遥控关机)  >200ms → flag=2
@@ -141,12 +161,11 @@ void App_Lora_Task(void)
         lora3a22_finsh_flag = 0;
         app_last_frame_us = time_us;
 
-        // 有操作判定: 任一摇杆离开死区 或 任一按键按下
+        // 有操作判定: 用"有效命令大小"而非摇杆原始值 或 任一按键按下
+        // (摇杆弹簧回中不完美的残留产生的命令其实<0.02m/s 几乎不动车, 应视为回中)
         uint8_t remote_active = 0;
-        for (int i = 0; i < 4; i++) {
-            if (lora3a22_uart_transfer.joystick[i] >  APP_JOYSTICK_DEADZONE ||
-                lora3a22_uart_transfer.joystick[i] < -APP_JOYSTICK_DEADZONE) remote_active = 1;
-        }
+        if (fabsf(pos_err_x) > APP_CMD_DEADBAND || fabsf(pos_err_y) > APP_CMD_DEADBAND) remote_active = 1;
+        if (fabsf(yaw_rate)  > APP_YAW_DEADBAND_DPS) remote_active = 1;
         for (int i = 0; i < 4; i++) {
             if (lora3a22_uart_transfer.key[i] != 0) remote_active = 1;
         }
@@ -193,24 +212,15 @@ void App_Lora_Task(void)
     }
     app_last_tick_us = now_us;
 
-    // 读取摇杆原始值
-    int16 joy0 = lora3a22_uart_transfer.joystick[0];   // 左杆X
-    int16 joy1 = lora3a22_uart_transfer.joystick[1];   // 左杆Y
-    int16 joy2 = lora3a22_uart_transfer.joystick[2];   // 右杆X
-
-    float raw_y = app_stick_raw(joy1);   // 前后
-    float raw_x = app_stick_raw(joy0);   // 左右
-    float raw_yaw = app_stick_raw(joy2); // 自转
-
     // ---- 左摇杆 → 像素误差 (模拟无人机发送) ----
-    // 位置环 err_x = -GetPositionErrorX(), 符号标定见 APP_SIGN_FWD/LAT
-    // 前推(joy1>0) 应使 pos_error_x 最终产生 vx>0 前进
-    SetPositionError(raw_y * APP_STICK_K_FWD * APP_SIGN_FWD,
-                     raw_x * APP_STICK_K_LAT * APP_SIGN_LAT);
+    // 前推(joy1>0) 应使 pos_error_x 最终产生 vx>0 前进; 死带内残留输出0
+    SetPositionError((fabsf(pos_err_x) > APP_CMD_DEADBAND) ? pos_err_x : 0.0f,
+                     (fabsf(pos_err_y) > APP_CMD_DEADBAND) ? pos_err_y : 0.0f);
 
     // ---- 右摇杆 → 增量式自转 ----
-    // 摇杆推着就累加 angle_target, 回中自然锁住当前朝向
-    angle_target += raw_yaw * APP_YAW_K * APP_YAW_SIGN * dt_sec;
+    // 摇杆推着就累加 angle_target, 回中锁朝向; 死带内残留不累加(不会缓慢漂移)
+    if (fabsf(yaw_rate) > APP_YAW_DEADBAND_DPS)
+        angle_target += yaw_rate * dt_sec;
 
     // 角度归一化到 ±180, 防止长期自转浮点溢出
     if (angle_target >  180.0f) angle_target -= 360.0f;

@@ -78,11 +78,14 @@
 // 芯片ID
 #define QMC5883L_CHIP_ID           (0xFF)  // 芯片ID寄存器固定返回值
 
-// 硬铁校准 (2026-08-06 2G量程 360°旋转 椭圆拟合, 13760点)
-// 2G量程精确值 (非8G×4估算): 拟合中心 X=-24325, Y=-3199, 椭圆率1.031
-#define QMC5883L_HARD_IRON_X       (-24325) // X中心 (raw, 2G: 12000 LSB/G)
-#define QMC5883L_HARD_IRON_Y       (-3199)  // Y中心 (raw, 2G: 12000 LSB/G)
-#define QMC5883L_SOFT_IRON_RATIO   (1.031f) // 椭圆率<1.1 无需软铁修正 (未使用)
+// 硬铁/软铁校准 (2026-08-09 架高车头/距电机15cm 重做椭圆拟合, 19353点)
+// 旧(居中,距电机5-6cm): X=-24325 Y=-3199 椭圆率1.031 → 架高后硬铁效应大减
+// 新位置拟合: 中心 X=-145 Y=-521, 椭圆率1.091, 旋转角77.9° (长轴方向)
+#define QMC5883L_HARD_IRON_X       (-145)   // X中心 (raw, 2G: 12000 LSB/G)
+#define QMC5883L_HARD_IRON_Y       (-521)   // Y中心 (raw, 2G: 12000 LSB/G)
+#define QMC5883L_SOFT_IRON_RATIO   (1.091f) // 椭圆率 a/b (软铁修正用)
+#define QMC5883L_SOFT_IRON_COS     (0.2088f)// 软铁修正旋转角 cos77.9°
+#define QMC5883L_SOFT_IRON_SIN     (0.9780f)// 软铁修正旋转角 sin77.9°
 
 // 灵敏度参数
 #define QMC5883L_SENSITIVITY_2G    (12000.0f)  // ±2G量程灵敏度: 12000 LSB/高斯

@@ -17,6 +17,7 @@
 #include "motor.h"          // Motor_SetSpeed, motor_L1..R2
 #include "My_imu660ra.h"    // My_Imu660ra_GetYaw
 #include "inertial_nav.h"   // fused_yaw
+#include "key_task.h"       // MAG_CALIB_MODE / MAG_CALIB_MOTOR_TEST
 
 // ====================================================全局变量定义====================================================
 // 定义全局变量
@@ -161,6 +162,11 @@ void qmc5883l_get_mag(void)
     my = (int16)(((uint16)dat[3] << 8) | dat[2]);
     mz = (int16)(((uint16)dat[5] << 8) | dat[4]);
 
+#if MAG_CALIB_MODE && MAG_CALIB_MOTOR_TEST == 0
+    // ---- 椭圆标定模式: 错位读窗口关闭, 原始数据直通 ----
+    // 2026-08-09 架高后硬铁全变, 旧硬铁中心化幅度必越窗(冻结prev→标定数据污染)
+    // 标定只需要原始mx/my, 不需要窗口保护; 硬铁中心由上位机椭圆拟合重新求出
+#else
     // ---- 错位读校验: 中心化幅度校验 (唯一判据) ----
     // 去硬铁中心后磁场幅度应≈3450counts(2G实测, 磁力计绕Z转物理约束)
     // 错位读垃圾值(0/265/2558/±32512)去偏后幅度≥9000 → 必判垃圾
@@ -183,6 +189,7 @@ void qmc5883l_get_mag(void)
         qmc5883l_mag_reject_cnt++;
     }
     // 首读即垃圾(罕见): 不立基线, 输出本帧, 下一帧合理即可恢复
+#endif
 
     // 写入全局
     qmc5883l_mag_x = mx;
@@ -237,6 +244,13 @@ float qmc5883l_calculate_heading(void)
 {
     float mx = (float)(qmc5883l_mag_x - QMC5883L_HARD_IRON_X);
     float my = (float)(qmc5883l_mag_y - QMC5883L_HARD_IRON_Y);
+
+    // 软铁修正 (2026-08-09 架高标定): 逆旋转 -θ 把长轴转回X轴, 再缩放 y/r 成圆
+    // θ=77.9° (长轴方向), r=a/b=1.091
+    float mxr = mx*QMC5883L_SOFT_IRON_COS + my*QMC5883L_SOFT_IRON_SIN;
+    float myr = -mx*QMC5883L_SOFT_IRON_SIN + my*QMC5883L_SOFT_IRON_COS;
+    mx = mxr;
+    my = myr / QMC5883L_SOFT_IRON_RATIO;
 
     float heading_rad = atan2f(my, mx);
     float heading_deg = heading_rad * 57.29578f;
@@ -406,13 +420,14 @@ void qmc5883l_motor_test_task(void)
     motor_test_tick = 0;
     if (!motor_test_run) return;
 
-    // 记录: pwm, mag_x, mag_y, 融合yaw, 陀螺yaw, 被测轮编码器速度(ω)
+    // 记录: pwm, mag_x, mag_y, 融合yaw, 陀螺yaw, 四轮编码器速度(ω)
     // ω用于电流估计 I≈a·PWM−b·ω 拟合 (无载高ω→电流小, 堵转ω≈0→电流大, 磁场=Σk·I)
-    // 只打印被测轮(MOTOR_TEST_INDEX对应轮)的spd, 四轮已确认接线
-    printf("%d,%d,%d,%.1f,%.1f,%.1f\n",
+    // 4个spd列与 mag_motor_test.py 的9列格式对齐 (spd_l1,l2,r1,r2)
+    printf("%d,%d,%d,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f\n",
            motor_test_duty, qmc5883l_mag_x, qmc5883l_mag_y,
            fused_yaw, My_Imu660ra_GetYaw(),
-           motor_test_ptr->encoder_speed);
+           motor_L1.encoder_speed, motor_L2.encoder_speed,
+           motor_R1.encoder_speed, motor_R2.encoder_speed);
 
     // 扫频: 每3个10ms(30ms) +1 → 0到300, 全程9秒, 到300保持等KEY4 (期间可堵轮测带载)
     if (motor_test_duty < MOTOR_TEST_MAX_DUTY) {
