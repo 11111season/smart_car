@@ -57,6 +57,21 @@
 *                                                                      KEY_4发车 → Inav_Launch(武装+3.5s)
 *                                                           · 停止所有控制任务: Inav_StopAll → 关环+停桨+race_done完赛级锁定(断电刷新)
 *                                                           · KEY_3始终退回主菜单, 记录页取消闭环放首次KEY_4 (不与菜单冲突)
+* 2026-08-09        Claude                             v2.4.0 设置惯导速度限幅 (惯导设置二级第4项, 发车区航点设置/清除历史数据 之间):
+*                                                           · 进入页: 第二行 x速度限幅:0.XXm/s, 第三行 y速度限制:0.XXm/s
+*                                                           · KEY_1 +0.05m/s 封顶0.5, KEY_4 -0.05m/s 保底0, 未确认值闪烁
+*                                                           · 两次KEY_2确认(先x后y) → 写W25Q64设置区 → "写入速度限幅成功" 1s回二级
+*                                                           · 存储 flash_settings_t 扩展 8→10 字节 (尾部 spd_limit_x/y), 存0~10 (0.05m/s步进)
+*                                                           · 清除历史数据 顺延为第5项, 一并清零速度限幅恢复默认0.30m/s
+*                                                           · 缺字 速/度/限/幅/功 待用户取模填入 menu_font.c 90-94
+* 2026-08-10        Claude                             v2.5.0 设置位置环速度限幅 (主菜单一级第3项, 无人机控制/停止所有控制任务 之间):
+*                                                           · 一级菜单 3行→4行 (MAIN_ROWS[4], 重绘 i<4, 取模 %4 三处同步)
+*                                                           · KEY_2进入 → x速度限幅:0.XXm/s (KEY_1 +0.05m/s 封顶0.5, KEY_4 -0.05m/s 保底0, 未确认闪烁)
+*                                                           · 两次KEY_2确认(先x后y) → 写W25Q64设置区 → "写入位置环速度限幅成功" 1s回主菜单
+*                                                           · 存储 flash_settings_t 扩展 10→12 字节 (尾部 pos_limit_x/y), 存0~10 (0.05m/s步进)
+*                                                           · 接线: motor.c PositionControl_Update 每周期用 pos_limit_x/y 同步位置PID输出限幅 (替代硬编码 POS_V_MAX)
+*                                                           · 清除历史数据 一并清零位置环限幅恢复默认0.30m/s
+*                                                           · 缺字 位/环 已由用户取模填入 menu_font.c 95-96
 ********************************************************************************************************************/
 
 #include "App_menu.h"
@@ -84,6 +99,12 @@ typedef enum{
     STATE_INR_LAUNCH_OFFSET_X,   //请输入偏移坐标: 设置偏移x (第三行白框*, x 闪烁)
     STATE_INR_LAUNCH_OFFSET_Y,   //请输入偏移坐标: 设置偏移y (第四行白框*, y 闪烁, x 定住)
     STATE_INR_LAUNCH_DONE,       //发车区航点设置完毕 (1s 后自动回二级)
+    STATE_INR_SPD_LIMIT_X,       //设置惯导速度限幅: 第二行 x速度限幅 (KEY_1 +0.05封顶0.5, KEY_4 -0.05保底0, KEY_2 确认, 闪烁)
+    STATE_INR_SPD_LIMIT_Y,       //设置惯导速度限幅: 第三行 y速度限制 (x 已确认, y 闪烁)
+    STATE_INR_SPD_LIMIT_DONE,    //写入速度限幅成功 (1s 后自动回二级)
+    STATE_POS_LIMIT_X,           //设置位置环速度限幅: 第二行 x速度限幅 (键位同惯导限幅, 闪烁)
+    STATE_POS_LIMIT_Y,           //设置位置环速度限幅: 第三行 y速度限制 (x 已确认, y 闪烁)
+    STATE_POS_LIMIT_DONE,        //写入位置环速度限幅成功 (1s 后自动回主菜单)
     STATE_UAV_Control,           //无人机控制 (二级): 电机启动
     STATE_UAV_TAKEOFF,           //请起飞
     STATE_UAV_DEPART,            //请发车
@@ -106,10 +127,20 @@ uint8_t launch_enable = 1;             // 发车区航点启用 (1=启用 0=禁�
 int16   launch_off_x  = 0;             // 发车区偏移x (单位0.1m, 范围 -20~+20, 前正后负, 对应小车 vx)
 int16   launch_off_y  = 0;             // 发车区偏移y (单位0.1m, 范围 -20~+20, 左正右负, 对应小车 vy)
 
+/* 惯导速度限幅 (非 static, 后续控制逻辑经 App_menu.h 读取) */
+uint8_t spd_limit_x = 6;               // 惯导速度限幅x (单位0.05m/s, 范围 0~10 → 0~0.5m/s; 默认0.30m/s 与 POS_MAX 一致)
+uint8_t spd_limit_y = 6;               // 惯导速度限幅y (同上, 默认0.30m/s)
+
+/* 位置环速度限幅 (非 static, 后续控制逻辑经 App_menu.h 读取) */
+uint8_t pos_limit_x = 6;               // 位置环速度限幅x (单位0.05m/s, 范围 0~10 → 0~0.5m/s; 默认0.30m/s 与 POS_V_MAX 一致)
+uint8_t pos_limit_y = 6;               // 位置环速度限幅y (同上, 默认0.30m/s)
+
 /* 发车区设置页闪烁局部变量 */
 static uint8_t  launch_blink_last = 0xFF;   // 发车区设置闪烁相位 (上次值)
+static uint8_t  spd_blink_last    = 0xFF;   // 速度限幅设置闪烁相位 (上次值)
+static uint8_t  pos_blink_last    = 0xFF;   // 位置环限幅设置闪烁相位 (上次值)
 
-/* 当前菜单配置 → W25Q64 Region2 (设置区: 航点数量 + 发车区启用标志 + 偏移xy) */
+/* 当前菜单配置 → W25Q64 Region2 (设置区: 航点数量 + 发车区启用标志 + 偏移xy + 惯导/位置环速度限幅) */
 static void menu_save_settings(void)
 {
     flash_settings_t st;
@@ -119,9 +150,13 @@ static void menu_save_settings(void)
     st.launch_enable = launch_enable;
     st.launch_off_x  = launch_off_x;
     st.launch_off_y  = launch_off_y;
+    st.spd_limit_x   = spd_limit_x;
+    st.spd_limit_y   = spd_limit_y;
+    st.pos_limit_x   = pos_limit_x;
+    st.pos_limit_y   = pos_limit_y;
     FlashStore_SaveSettings(&st);
-    printf("FLASH: settings saved (wp=%d en=%d off=%d,%d)\n",
-           wp_set, launch_enable, launch_off_x, launch_off_y);
+    printf("FLASH: settings saved (wp=%d en=%d off=%d,%d spd=%d,%d pos=%d,%d)\n",
+           wp_set, launch_enable, launch_off_x, launch_off_y, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y);
 }
 
 #define MENU_SET_MAX            9     // 航点数设置上限 (对应字模一~九)
@@ -141,11 +176,17 @@ static void menu_save_settings(void)
 #define MENU_LAUNCH_TOGGLE_X   (MENU_TEXT_X + 9*MENU_CHN_W + 8)   // 是/否 x: 是否启用发车区航点 9字 + ':' (156)
 #define MENU_OFF_VAL_X         (MENU_TEXT_X + 4*MENU_CHN_W + 16)  // 偏移坐标值 x: 偏移32+x8+坐标32+:8 (92)
 
+/* 惯导速度限幅排版: 速度限幅行 = x/y(8px) + 速度限幅/限制(4字=64px) + ':'(8px) + 数值(4×8px) + m/s(3×8px) */
+#define MENU_SPD_LABEL_X       (MENU_TEXT_X + 8)                  // 速度限幅/限制 汉字起点: x/y 之后 (20)
+#define MENU_SPD_COLON_X       (MENU_TEXT_X + 8 + 4*MENU_CHN_W)   // ':' x: 速度限幅 4字 后 (92)
+#define MENU_SPD_VAL_X         (MENU_SPD_COLON_X + 8)             // 数值 x (100)
+#define MENU_SPD_MS_X          (MENU_SPD_VAL_X + 4*8)             // m/s x: 数值 4字符 后 (132)
+
 /*****************************************************************文字定义 (字库索引数组, 顺序任意)*****************************************************************/
 /* 标题 */
 static const menu_chn_idx_enum TXT_TITLE_MAIN[] = { MENU_CHN_MAI, MENU_CHN_LUN, MENU_CHN_XIAO, MENU_CHN_CHE, MENU_CHN_CAI, MENU_CHN_DAN };  // 麦轮小车菜单
 
-/* 一级菜单 3 行 */
+/* 一级菜单 4 行 */
 static const menu_chn_idx_enum TXT_GUANDAO_SHEZHI[] = { MENU_CHN_GUAN, MENU_CHN_DAO, MENU_CHN_SHE, MENU_CHN_ZHI3 };                 // 惯导设置
 static const menu_chn_idx_enum TXT_WURENJI[]         = { MENU_CHN_WU2, MENU_CHN_REN, MENU_CHN_JI2, MENU_CHN_KONG, MENU_CHN_ZHI2 }; // 无人机控制
 static const menu_chn_idx_enum TXT_TINGZHI_RENWU[]   = { MENU_CHN_TING, MENU_CHN_ZHI, MENU_CHN_SUO, MENU_CHN_YOU, MENU_CHN_KONG, MENU_CHN_ZHI2, MENU_CHN_REN2, MENU_CHN_WU3 };  // 停止所有控制任务
@@ -172,6 +213,16 @@ static const menu_chn_idx_enum TXT_ZUO_BIAO[]                  = { MENU_CHN_ZUO,
 static const menu_chn_idx_enum TXT_MI[]                        = { MENU_CHN_MI };                   // 米
 static const menu_chn_idx_enum TXT_LAUNCH_TOGGLE[]             = { MENU_CHN_SHI3, MENU_CHN_FOU };   // 是/否 (切换用, 与 launch_enable 对应)
 
+/* 惯导速度限幅 */
+static const menu_chn_idx_enum TXT_SHEZHI_SUDU_XIANFU[]        = { MENU_CHN_SHE, MENU_CHN_ZHI3, MENU_CHN_GUAN, MENU_CHN_DAO, MENU_CHN_SU, MENU_CHN_DU2, MENU_CHN_XIAN, MENU_CHN_FU };  // 设置惯导速度限幅
+static const menu_chn_idx_enum TXT_SUDU_XIANFU[]               = { MENU_CHN_SU, MENU_CHN_DU2, MENU_CHN_XIAN, MENU_CHN_FU };            // 速度限幅 (x 行用)
+static const menu_chn_idx_enum TXT_SUDU_XIANZHI[]              = { MENU_CHN_SU, MENU_CHN_DU2, MENU_CHN_XIAN, MENU_CHN_ZHI2 };          // 速度限制 (y 行用)
+static const menu_chn_idx_enum TXT_XIERU_SUDU_XIANFU_CHENGONG[]= { MENU_CHN_XIE, MENU_CHN_RU, MENU_CHN_SU, MENU_CHN_DU2, MENU_CHN_XIAN, MENU_CHN_FU, MENU_CHN_CHENG, MENU_CHN_GONG };  // 写入速度限幅成功
+
+/* 位置环速度限幅 */
+static const menu_chn_idx_enum TXT_SHEZHI_WEIZHIHUAN_SUDU_XIANFU[]        = { MENU_CHN_SHE, MENU_CHN_ZHI3, MENU_CHN_WEI, MENU_CHN_ZHI3, MENU_CHN_HUAN, MENU_CHN_SU, MENU_CHN_DU2, MENU_CHN_XIAN, MENU_CHN_FU };  // 设置位置环速度限幅
+static const menu_chn_idx_enum TXT_XIERU_WEIZHIHUAN_SUDU_XIANFU_CHENGONG[]= { MENU_CHN_XIE, MENU_CHN_RU, MENU_CHN_WEI, MENU_CHN_ZHI3, MENU_CHN_HUAN, MENU_CHN_SU, MENU_CHN_DU2, MENU_CHN_XIAN, MENU_CHN_FU, MENU_CHN_CHENG, MENU_CHN_GONG };  // 写入位置环速度限幅成功
+
 /* 无人机控制二级 + 起飞流程 */
 static const menu_chn_idx_enum TXT_DIANJI_QIDONG[]   = { MENU_CHN_DIAN2, MENU_CHN_JI2, MENU_CHN_QI3, MENU_CHN_DONG };                          // 电机启动
 static const menu_chn_idx_enum TXT_JIANER_QIFEI[]    = { MENU_CHN_QING2, MENU_CHN_AN, MENU_CHN_XIA, MENU_CHN_JIAN, MENU_CHN_ER, MENU_CHN_QI2, MENU_CHN_FEI };  // 请按下按键二起飞
@@ -186,15 +237,17 @@ static const menu_chn_idx_enum TXT_KAISHI_BISAI[]    = { MENU_CHN_KAI, MENU_CHN_
 static const menu_chn_idx_enum TXT_SUOYOU_RENWU_YITINGZHI[] = { MENU_CHN_SUO, MENU_CHN_YOU, MENU_CHN_REN2, MENU_CHN_WU3, MENU_CHN_YI2, MENU_CHN_TING, MENU_CHN_ZHI };  // 所有任务已停止
 
 /* KEY_1 增量重绘用的行文字表 (下标=行号) */
-static const menu_text_t MAIN_ROWS[3] = {
-    { TXT_GUANDAO_SHEZHI, 4 },   // 惯导设置
-    { TXT_WURENJI,        5 },   // 无人机控制
-    { TXT_TINGZHI_RENWU,  8 },   // 停止所有控制任务
+static const menu_text_t MAIN_ROWS[4] = {
+    { TXT_GUANDAO_SHEZHI,               4 },   // 惯导设置
+    { TXT_WURENJI,                      5 },   // 无人机控制
+    { TXT_SHEZHI_WEIZHIHUAN_SUDU_XIANFU, 9 },   // 设置位置环速度限幅
+    { TXT_TINGZHI_RENWU,                8 },   // 停止所有控制任务
 };
-static const menu_text_t INR_ROWS[4] = {
+static const menu_text_t INR_ROWS[5] = {
     { TXT_JILU_HANGDIAN,            4 },    // 记录航点
     { TXT_SHEZHI_HANGDIANSHU,       6 },    // 设置航点数量
     { TXT_FACHEQU_HANGDIAN_SHEZHI,  7 },    // 发车区航点设置
+    { TXT_SHEZHI_SUDU_XIANFU,       8 },    // 设置惯导速度限幅
     { TXT_QINGCHU_LISHI,            6 },    // 清除历史数据
 };
 
@@ -351,6 +404,53 @@ static void menu_draw_offset_line(uint8_t line_idx, uint8_t is_x, uint8_t select
     if (selected) ips200_set_color(RGB565_RED, RGB565_BLACK);                               // 恢复黑背景
 }
 
+/* 速度限幅值 → 4 个 ASCII 字符: 整数位 + 小数点 + 两位小数 (如 0.30 / 0.05, 无符号位, 0~0.5)
+ * v_steps 单位 0.05m/s, 0~10; 百分位 = 步数×5 (0/5/10/.../50) */
+static void menu_show_spd_val(uint8_t v_steps, uint16 x, uint16 y)
+{
+    uint16 cent = (uint16)v_steps * 5;             // 0.01m/s 单位: 0~50
+    ips200_show_char(x,      y, '0');              // 整数位恒为 0
+    ips200_show_char(x +  8, y, '.');
+    ips200_show_char(x + 16, y, (char)('0' + cent / 10));          // 十分位
+    ips200_show_char(x + 24, y, (char)('0' + cent % 10));          // 百分位
+}
+
+/* 只重绘速度限幅行中的数值区 (按键调整 / 闪烁用, 不重绘整行); v = 值源指针 (惯导 spd_limit 或 位置环 pos_limit) */
+static void menu_draw_spd_val_only(uint8_t line_idx, const uint8_t *v, uint8_t selected, uint8_t visible)
+{
+    uint16 y = MENU_ROW_Y0 + line_idx*MENU_ROW_H;
+    uint16 bg = selected ? RGB565_WHITE : RGB565_BLACK;
+    if (visible)
+    {
+        ips200_set_color(RGB565_RED, bg);
+        menu_show_spd_val(*v, MENU_SPD_VAL_X, y + 2);
+        if (selected) ips200_set_color(RGB565_RED, RGB565_BLACK);
+    }
+    else
+    {
+        menu_fill_rect(MENU_SPD_VAL_X, y, MENU_SPD_VAL_X + 4*8 - 1, y + MENU_ROW_H - 1, bg);  // 底色盖掉 = 灭相位
+    }
+}
+
+/* 速度限幅整行: x/y 速度限幅/限制 : 0.XXm/s; v = 值源指针, selected=1 白框*, 0 黑底红字 */
+static void menu_draw_spd_line(uint8_t line_idx, const uint8_t *v, uint8_t is_x, uint8_t selected, uint8_t val_visible)
+{
+    uint16 y = MENU_ROW_Y0 + line_idx*MENU_ROW_H;
+    uint16 bg = selected ? RGB565_WHITE : RGB565_BLACK;
+    menu_text_t t_lab = is_x ? MT(TXT_SUDU_XIANFU) : MT(TXT_SUDU_XIANZHI);   // 速度限幅 / 速度限制
+
+    menu_fill_rect(0, y, MENU_SCREEN_W - 1, y + MENU_ROW_H - 1, bg);
+    ips200_set_color(RGB565_RED, bg);
+    ips200_show_char(MENU_TEXT_X,                  y + 2, is_x ? 'x' : 'y');   // x/y
+    menu_show_text(MENU_SPD_LABEL_X,               y + 2, &t_lab, RGB565_RED); // 速度限幅/限制
+    ips200_show_char(MENU_SPD_COLON_X,             y + 2, ':');                // :
+    if (val_visible) menu_show_spd_val(*v, MENU_SPD_VAL_X, y + 2);             // 数值
+    else             menu_fill_rect(MENU_SPD_VAL_X, y, MENU_SPD_VAL_X + 4*8 - 1, y + MENU_ROW_H - 1, bg);
+    ips200_show_string(MENU_SPD_MS_X,              y + 2, "m/s");              // m/s
+    if (selected) ips200_show_char(MENU_STR_X, y + 2, '*');
+    if (selected) ips200_set_color(RGB565_RED, RGB565_BLACK);                  // 恢复黑背景
+}
+
 /* 是否启用发车区航点： 后面的 是/否 (白底红字, 由 launch_enable 决定) */
 static void menu_draw_launch_toggle(void)
 {
@@ -385,12 +485,12 @@ static void menu_draw_screen(MenuState st)
     {
     case STATE_MAIN:
         menu_draw_title(TXT_TITLE_MAIN, 6);
-        for (i = 0; i < 3; i++) menu_draw_line(i, MAIN_ROWS[i], (i == (uint8_t)menu_index));
+        for (i = 0; i < 4; i++) menu_draw_line(i, MAIN_ROWS[i], (i == (uint8_t)menu_index));
         break;
 
     case STATE_Internal_Nav_Record:
         menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
-        for (i = 0; i < 4; i++) menu_draw_line(i, INR_ROWS[i], (i == (uint8_t)menu_index));
+        for (i = 0; i < 5; i++) menu_draw_line(i, INR_ROWS[i], (i == (uint8_t)menu_index));
         break;
 
     case STATE_INR_CLEAR_DONE:
@@ -454,6 +554,40 @@ static void menu_draw_screen(MenuState st)
         menu_draw_line(0, MT(TXT_FACHEQU_SHEZHI_WANBI), 1);         // 发车区航点设置完毕
         break;
 
+    case STATE_INR_SPD_LIMIT_X:
+        menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
+        menu_draw_spd_line(0, &spd_limit_x, 1, 1, 1);  // x速度限幅:0.XXm/s (白框*, x 可见)
+        menu_draw_spd_line(1, &spd_limit_y, 0, 0, 1);  // y速度限制:0.XXm/s (黑底)
+        break;
+
+    case STATE_INR_SPD_LIMIT_Y:
+        menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
+        menu_draw_spd_line(0, &spd_limit_x, 1, 0, 1);  // x速度限幅:0.XXm/s (已定, 黑底)
+        menu_draw_spd_line(1, &spd_limit_y, 0, 1, 1);  // y速度限制:0.XXm/s (白框*, y 可见)
+        break;
+
+    case STATE_INR_SPD_LIMIT_DONE:
+        menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
+        menu_draw_line(0, MT(TXT_XIERU_SUDU_XIANFU_CHENGONG), 1);   // 写入速度限幅成功
+        break;
+
+    case STATE_POS_LIMIT_X:
+        menu_draw_title(TXT_SHEZHI_WEIZHIHUAN_SUDU_XIANFU, 9);
+        menu_draw_spd_line(0, &pos_limit_x, 1, 1, 1);  // x速度限幅:0.XXm/s (白框*, x 可见)
+        menu_draw_spd_line(1, &pos_limit_y, 0, 0, 1);  // y速度限制:0.XXm/s (黑底)
+        break;
+
+    case STATE_POS_LIMIT_Y:
+        menu_draw_title(TXT_SHEZHI_WEIZHIHUAN_SUDU_XIANFU, 9);
+        menu_draw_spd_line(0, &pos_limit_x, 1, 0, 1);  // x速度限幅:0.XXm/s (已定, 黑底)
+        menu_draw_spd_line(1, &pos_limit_y, 0, 1, 1);  // y速度限制:0.XXm/s (白框*, y 可见)
+        break;
+
+    case STATE_POS_LIMIT_DONE:
+        menu_draw_title(TXT_SHEZHI_WEIZHIHUAN_SUDU_XIANFU, 9);
+        menu_draw_line(0, MT(TXT_XIERU_WEIZHIHUAN_SUDU_XIANFU_CHENGONG), 1);   // 写入位置环速度限幅成功
+        break;
+
     case STATE_UAV_Control:
         menu_draw_title(TXT_WURENJI, 5);
         menu_draw_line(0, MT(TXT_DIANJI_QIDONG), 1);      // 电机启动
@@ -492,7 +626,7 @@ void App_Menu_Init(void)
 {
     ips200_init(IPS200_TYPE_SPI);
     ips200_set_font(IPS200_8X16_FONT);          // ASCII (* 号等) 用 8x16, 与 16px 汉字等高
-    printf("MENU v2.3.0\r\n");                  // 版本标记: 串口确认烧录的是最新固件
+    printf("MENU v2.5.0\r\n");                  // 版本标记: 串口确认烧录的是最新固件
     ips200_set_color(RGB565_RED, RGB565_BLACK);
     ips200_full(RGB565_BLACK);                  // 显式填黑, 不依赖全局背景色
     menu_draw_screen(menu_state);               // 开机绘制一次主界面
@@ -512,7 +646,7 @@ void App_Menu_Task(void)
         ips200_full(RGB565_BLACK);
         menu_index = 0;                          // 进入新页默认选中第1行
         if (menu_state == STATE_INR_CLEAR_DONE || menu_state == STATE_INR_SET_WP_DONE || menu_state == STATE_INR_WP_DONE || menu_state == STATE_Stop_All_Control
-            || menu_state == STATE_INR_LAUNCH_DISABLED || menu_state == STATE_INR_LAUNCH_DONE)
+            || menu_state == STATE_INR_LAUNCH_DISABLED || menu_state == STATE_INR_LAUNCH_DONE || menu_state == STATE_INR_SPD_LIMIT_DONE || menu_state == STATE_POS_LIMIT_DONE)
             auto_back_tick = menu_tick_10ms;     // 进入自动返回状态, 记录节拍起点
         menu_draw_screen(menu_state);
         prev_state = menu_state;
@@ -527,7 +661,7 @@ void App_Menu_Task(void)
         {
             old = (uint8_t)menu_index;
             menu_index++;
-            menu_index %= 3;
+            menu_index %= 4;
             key_clear_state(KEY_1);
             menu_draw_line(old, MAIN_ROWS[old], 0);                        // 旧行: 取消选中
             menu_draw_line((uint8_t)menu_index, MAIN_ROWS[menu_index], 1); // 新行: 选中
@@ -538,6 +672,7 @@ void App_Menu_Task(void)
             key_clear_state(KEY_2);
             if      (menu_index == 0) menu_state = STATE_Internal_Nav_Record;             // 惯导设置
             else if (menu_index == 1) menu_state = STATE_UAV_Control;                     // 无人机控制
+            else if (menu_index == 2) { pos_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_POS_LIMIT_X; }  // 设置位置环速度限幅 → 限幅x (值初始可见)
             else { Inav_StopAll(); menu_state = STATE_Stop_All_Control; auto_back_tick = menu_tick_10ms; } // 停止所有控制任务 (关环+停桨+完赛级锁定, 提示1s后回主菜单)
         }
         break;
@@ -549,7 +684,7 @@ void App_Menu_Task(void)
         {
             old = (uint8_t)menu_index;
             menu_index++;
-            menu_index %= 4;
+            menu_index %= 5;
             key_clear_state(KEY_1);
             menu_draw_line(old, INR_ROWS[old], 0);                        // 旧行: 取消选中
             menu_draw_line((uint8_t)menu_index, INR_ROWS[menu_index], 1); // 新行: 选中
@@ -561,10 +696,13 @@ void App_Menu_Task(void)
             if      (menu_index == 0) { wp_cur = 0; rec_cancel_done = 0; Inav_ResetMap(); menu_state = STATE_INR_WP_START; }  // 记录航点 → 记录流程 (首次KEY4取消闭环, 之后才是正式记录; 重进先清内存航点防残留)
             else if (menu_index == 1) { set_num = 1; set_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_SET_WP_COUNT; }  // 设置航点数量 → 调整页 (num初始可见)
             else if (menu_index == 2) { launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_LAUNCH_ENABLE; }          // 发车区航点设置 → 启用页 (是/否初始可见)
+            else if (menu_index == 3) { spd_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_SPD_LIMIT_X; }              // 设置惯导速度限幅 → 限幅x (值初始可见)
             else {
-                FlashStore_ClearAll();       // 清 W25Q64: 航点地图 + 设置(航点数量/发车区启用标志)
+                FlashStore_ClearAll();       // 清 W25Q64: 航点地图 + 设置(航点数量/发车区启用标志/偏移/惯导+位置环速度限幅)
                 Inav_ResetMap();             // 清内存航点
                 wp_set = 1; launch_enable = 0; launch_off_x = 0; launch_off_y = 0;  // 恢复默认 (发车区标志清零)
+                spd_limit_x = 6; spd_limit_y = 6;   // 恢复默认限幅 0.30m/s (与 POS_MAX 一致)
+                pos_limit_x = 6; pos_limit_y = 6;   // 恢复默认限幅 0.30m/s (与 POS_V_MAX 一致)
                 Inav_UpdateMax();            // 重算 bcn_max/wp_max (=1, 无发车区)
                 printf("FLASH: all data cleared\n");
                 menu_state = STATE_INR_CLEAR_DONE;      // 数据已清除 → 提示1s
@@ -748,6 +886,152 @@ void App_Menu_Task(void)
         }
         break;
 
+    /* 设置惯导速度限幅: 设置 x (KEY_1 +0.05m/s 封顶0.5, KEY_4 -0.05m/s 保底0, KEY_2 确认, x 闪烁) */
+    case STATE_INR_SPD_LIMIT_X:
+        k = key_get_state(KEY_1);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_1);
+            if (spd_limit_x < 10) spd_limit_x++;                      // 每次 +0.05, 封顶 0.50
+            menu_draw_spd_val_only(0, &spd_limit_x, 1, 1);
+            spd_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_4);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_4);
+            if (spd_limit_x > 0) spd_limit_x--;                       // 每次 -0.05, 保底 0
+            menu_draw_spd_val_only(0, &spd_limit_x, 1, 1);
+            spd_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_2);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_2);
+            spd_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            menu_state = STATE_INR_SPD_LIMIT_Y;                       // x 定住, 进入设置 y
+        }
+        {
+            uint8_t blink = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            if (blink != spd_blink_last)
+            {
+                spd_blink_last = blink;
+                if (blink) menu_draw_spd_val_only(0, &spd_limit_x, 1, 1);
+                else       menu_draw_spd_val_only(0, &spd_limit_x, 1, 0);
+            }
+        }
+        break;
+
+    /* 设置惯导速度限幅: 设置 y (x 已定住不再闪烁, y 闪烁; 键位同 x) */
+    case STATE_INR_SPD_LIMIT_Y:
+        k = key_get_state(KEY_1);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_1);
+            if (spd_limit_y < 10) spd_limit_y++;
+            menu_draw_spd_val_only(1, &spd_limit_y, 1, 1);
+            spd_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_4);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_4);
+            if (spd_limit_y > 0) spd_limit_y--;
+            menu_draw_spd_val_only(1, &spd_limit_y, 1, 1);
+            spd_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_2);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_2);
+            menu_save_settings();          // 写 W25Q64 Region2 (速度限幅 xy)
+            menu_state = STATE_INR_SPD_LIMIT_DONE;                    // 限幅都设好 → 写入成功提示1s
+            auto_back_tick = menu_tick_10ms;
+        }
+        {
+            uint8_t blink = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            if (blink != spd_blink_last)
+            {
+                spd_blink_last = blink;
+                if (blink) menu_draw_spd_val_only(1, &spd_limit_y, 1, 1);
+                else       menu_draw_spd_val_only(1, &spd_limit_y, 1, 0);
+            }
+        }
+        break;
+
+    /* 设置位置环速度限幅: 设置 x (KEY_1 +0.05m/s 封顶0.5, KEY_4 -0.05m/s 保底0, KEY_2 确认, x 闪烁) */
+    case STATE_POS_LIMIT_X:
+        k = key_get_state(KEY_1);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_1);
+            if (pos_limit_x < 10) pos_limit_x++;                      // 每次 +0.05, 封顶 0.50
+            menu_draw_spd_val_only(0, &pos_limit_x, 1, 1);
+            pos_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_4);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_4);
+            if (pos_limit_x > 0) pos_limit_x--;                       // 每次 -0.05, 保底 0
+            menu_draw_spd_val_only(0, &pos_limit_x, 1, 1);
+            pos_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_2);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_2);
+            pos_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            menu_state = STATE_POS_LIMIT_Y;                           // x 定住, 进入设置 y
+        }
+        {
+            uint8_t blink = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            if (blink != pos_blink_last)
+            {
+                pos_blink_last = blink;
+                if (blink) menu_draw_spd_val_only(0, &pos_limit_x, 1, 1);
+                else       menu_draw_spd_val_only(0, &pos_limit_x, 1, 0);
+            }
+        }
+        break;
+
+    /* 设置位置环速度限幅: 设置 y (x 已定住不再闪烁, y 闪烁; 键位同 x) */
+    case STATE_POS_LIMIT_Y:
+        k = key_get_state(KEY_1);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_1);
+            if (pos_limit_y < 10) pos_limit_y++;
+            menu_draw_spd_val_only(1, &pos_limit_y, 1, 1);
+            pos_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_4);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_4);
+            if (pos_limit_y > 0) pos_limit_y--;
+            menu_draw_spd_val_only(1, &pos_limit_y, 1, 1);
+            pos_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_2);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_2);
+            menu_save_settings();          // 写 W25Q64 Region2 (位置环速度限幅 xy)
+            menu_state = STATE_POS_LIMIT_DONE;                    // 限幅都设好 → 写入成功提示1s
+            auto_back_tick = menu_tick_10ms;
+        }
+        {
+            uint8_t blink = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            if (blink != pos_blink_last)
+            {
+                pos_blink_last = blink;
+                if (blink) menu_draw_spd_val_only(1, &pos_limit_y, 1, 1);
+                else       menu_draw_spd_val_only(1, &pos_limit_y, 1, 0);
+            }
+        }
+        break;
+
     /* 无人机控制: 起桨 → 起飞 → 发车 → 比赛 (KEY_2/KEY_4 推进)
      * 注: 目前接着遥控模拟, 发送指令为 // 占位注释, 恢复无人机通信后取消注释即可 */
     case STATE_UAV_Control:
@@ -802,14 +1086,14 @@ void App_Menu_Task(void)
      *    数据已清除/航点数设置完成/发车区已禁用/发车区设置完毕/所有航点记录完毕 → 惯导二级
      *    停止所有控制任务 → 主菜单 */
     if (menu_state == STATE_INR_CLEAR_DONE || menu_state == STATE_INR_SET_WP_DONE || menu_state == STATE_INR_WP_DONE || menu_state == STATE_Stop_All_Control
-        || menu_state == STATE_INR_LAUNCH_DISABLED || menu_state == STATE_INR_LAUNCH_DONE)
+        || menu_state == STATE_INR_LAUNCH_DISABLED || menu_state == STATE_INR_LAUNCH_DONE || menu_state == STATE_INR_SPD_LIMIT_DONE || menu_state == STATE_POS_LIMIT_DONE)
     {
         if (menu_tick_10ms - auto_back_tick >= MENU_AUTO_BACK_TICKS)
         {
-            if (menu_state == STATE_Stop_All_Control)
-                menu_state = STATE_MAIN;
+            if (menu_state == STATE_Stop_All_Control || menu_state == STATE_POS_LIMIT_DONE)
+                menu_state = STATE_MAIN;                       // 停止所有控制 / 位置环限幅完成 → 主菜单
             else
-                menu_state = STATE_Internal_Nav_Record;   // 含 STATE_INR_WP_DONE: 所有航点记录完毕也回二级
+                menu_state = STATE_Internal_Nav_Record;        // 含 STATE_INR_WP_DONE: 所有航点记录完毕也回二级
         }
     }
 }

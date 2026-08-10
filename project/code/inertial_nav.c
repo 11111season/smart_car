@@ -51,7 +51,19 @@ static uint8_t wp_idx = 0;
 static pt_t    seg_start;
 
 #define POS_KP  1.0f    // 位置闭环P增益
-#define POS_MAX 0.30f   // 位置闭环最大速度(m/s)
+//#define POS_MAX 0.30f  // 位置闭环最大速度(m/s)  (v2.4.0 起改为菜单 spd_limit_x/y 分轴运行时限幅)
+
+/* 巡逻目标速度分轴限幅: vx → 限到 spd_limit_x, vy → 限到 spd_limit_y
+ * 菜单单位 0.05m/s (0~10 → 0~0.5m/s), 读自 App_menu.h (W25Q64掉电存储覆盖) */
+static void inav_clamp_speed(float *vx, float *vy)
+{
+    float lim_x = (float)spd_limit_x * 0.05f;
+    float lim_y = (float)spd_limit_y * 0.05f;
+    if (*vx >  lim_x) *vx =  lim_x;
+    if (*vx < -lim_x) *vx = -lim_x;
+    if (*vy >  lim_y) *vy =  lim_y;
+    if (*vy < -lim_y) *vy = -lim_y;
+}
 
 /*==================================================== 状态机 ====================================================*/
 enum { BCN_IDLE, BCN_RECORD, BCN_DONE, BCN_GO };
@@ -482,8 +494,7 @@ void InertialNav_Update(void)
         // 导航去航点
         float vx = POS_KP * err_x;
         float vy = POS_KP * err_y;
-        float spd = sqrtf(vx*vx + vy*vy);
-        if (spd > POS_MAX) { vx *= POS_MAX/spd; vy *= POS_MAX/spd; }
+        inav_clamp_speed(&vx, &vy);          // v2.4.0: 菜单 spd_limit_x/y 分轴限幅
         bcn_nav_vx = vx; bcn_nav_vy = vy; bcn_nav_angle = 0.0f;
         bcn_nav_on = 1;
         return;
@@ -557,8 +568,7 @@ void InertialNav_Update(void)
 
     float vx = POS_KP * err_x;
     float vy = POS_KP * err_y;
-    float spd = sqrtf(vx * vx + vy * vy);
-    if (spd > POS_MAX) { vx *= POS_MAX / spd; vy *= POS_MAX / spd; }
+    inav_clamp_speed(&vx, &vy);              // v2.4.0: 菜单 spd_limit_x/y 分轴限幅
 
     bcn_nav_vx   = vx;
     bcn_nav_vy   = vy;

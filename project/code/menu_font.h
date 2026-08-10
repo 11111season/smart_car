@@ -137,6 +137,17 @@ typedef enum
     MENU_CHN_BIAO   = 88,   // 标
     MENU_CHN_MI     = 89,   // 米
 
+    /* ---- 2026-08-09 设置惯导速度限幅缺字 (字形已由用户取模填入 menu_font.c 90-94) ---- */
+    MENU_CHN_SU     = 90,   // 速
+    MENU_CHN_DU2    = 91,   // 度 (读=DU 已占, 同音字后缀2)
+    MENU_CHN_XIAN   = 92,   // 限
+    MENU_CHN_FU     = 93,   // 幅
+    MENU_CHN_GONG   = 94,   // 功
+
+    /* ---- 2026-08-10 设置位置环速度限幅缺字 (字形已由用户取模填入 menu_font.c 95-96) ---- */
+    MENU_CHN_WEI    = 95,   // 位
+    MENU_CHN_HUAN   = 96,   // 环 (位置环: 位=WEI 环=HUAN)
+
     MENU_CHN_COUNT,          // 字库总字数 (自动递增, 勿手动改)
 } menu_chn_idx_enum;
 

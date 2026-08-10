@@ -35,17 +35,23 @@ void Init_all(void)
         printf("W25Q64: init %s, ID=0x%06lX\n",
                (w25_err ? "FAIL" : "OK"), (unsigned long)w25q64_chip_id);
 
-        // 掉电存储加载: Region2 设置 (航点数量/发车区启用/偏移) → 覆盖菜单全局
+        // 掉电存储加载: Region2 设置 (航点数量/发车区启用/偏移/速度限幅) → 覆盖菜单全局
         flash_settings_t st;
         if (FlashStore_LoadSettings(&st)) {
             wp_set        = st.wp_set;
             launch_enable = st.launch_enable;
             launch_off_x  = st.launch_off_x;
             launch_off_y  = st.launch_off_y;
-            printf("FLASH: settings loaded (wp=%d en=%d off=%d,%d)\n",
-                   wp_set, launch_enable, launch_off_x, launch_off_y);
+            // 速度限幅: v2.3.0 及以前结构体只有 8 字节, 新字段读到旧扇区残留(0xFF) → 超上限钳位默认
+            spd_limit_x   = (st.spd_limit_x <= 10) ? st.spd_limit_x : 6;
+            spd_limit_y   = (st.spd_limit_y <= 10) ? st.spd_limit_y : 6;
+            pos_limit_x   = (st.pos_limit_x <= 10) ? st.pos_limit_x : 6;
+            pos_limit_y   = (st.pos_limit_y <= 10) ? st.pos_limit_y : 6;
+            printf("FLASH: settings loaded (wp=%d en=%d off=%d,%d spd=%d,%d pos=%d,%d)\n",
+                   wp_set, launch_enable, launch_off_x, launch_off_y, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y);
         } else {
-            printf("FLASH: no settings, use defaults (wp=%d en=%d)\n", wp_set, launch_enable);
+            printf("FLASH: no settings, use defaults (wp=%d en=%d spd=%d,%d pos=%d,%d)\n",
+                   wp_set, launch_enable, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y);
         }
         // Region1 航点地图 → 设 bcn_max/wp_max (按菜单设置) + 构建导航航点
         Inav_LoadMap();

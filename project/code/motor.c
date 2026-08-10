@@ -20,9 +20,10 @@
 ********************************************************************************************************************/
 
 #include "motor.h"
+#include "App_menu.h"   // 位置环速度限幅 pos_limit_x/y (菜单设置, W25Q64持久化)
 
 /*==================================================== 全局变量 ====================================================*/
-#define POS_V_MAX 0.30f
+#define POS_V_MAX 0.50f   // 位置环 PID 输出限幅天花板 (v2.5.0 起运行时被 pos_limit_x/y 覆盖, 此值仅 Init 用一次)
 // 四个电机结构体实例
 motor_t motor_L1;       // 左前轮
 motor_t motor_L2;       // 左后轮
@@ -215,6 +216,11 @@ void PositionControl_Update(void)
         target_vy = 0.0f;
         return;
     }
+
+    // 位置环分轴限幅 (菜单 pos_limit_x/y, 0.05m/s 步进, 0~0.5m/s): 每周期把菜单值同步到位置PID输出限幅
+    // 替代硬编码 POS_V_MAX — 否则菜单设 0.4/0.5 会被 PID 输出限幅卡在 0.30 (v2.5.0 接线)
+    PID_SetLimit(&pos_pid_x, (float)pos_limit_x * 0.05f, -(float)pos_limit_x * 0.05f);
+    PID_SetLimit(&pos_pid_y, (float)pos_limit_y * 0.05f, -(float)pos_limit_y * 0.05f);
 
     float vx_cmd = PID_Calculate(&pos_pid_x, err_x);
     float vy_cmd = PID_Calculate(&pos_pid_y, err_y);

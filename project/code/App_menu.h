@@ -11,5 +11,9 @@ extern uint8_t wp_set;            // 已确认航点总数 (不含发车区) = �
 extern uint8_t launch_enable;     // 发车区航点启用: 1=启用 0=禁用 (决定 WP_MAX 是否 +1)
 extern int16   launch_off_x;      // 发车区偏移x (单位0.1m, 范围 -20~+20, 前正后负, 对应小车 vx)
 extern int16   launch_off_y;      // 发车区偏移y (单位0.1m, 范围 -20~+20, 左正右负, 对应小车 vy)
+extern uint8_t spd_limit_x;       // 惯导速度限幅x (单位0.05m/s, 范围 0~10 → 0~0.5m/s, 对应 target_vx 限幅)
+extern uint8_t spd_limit_y;       // 惯导速度限幅y (单位0.05m/s, 范围 0~10 → 0~0.5m/s, 对应 target_vy 限幅)
+extern uint8_t pos_limit_x;       // 位置环速度限幅x (单位0.05m/s, 范围 0~10 → 0~0.5m/s, 位置环 target_vx 限幅)
+extern uint8_t pos_limit_y;       // 位置环速度限幅y (单位0.05m/s, 范围 0~10 → 0~0.5m/s, 位置环 target_vy 限幅)
 
 #endif
