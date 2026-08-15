@@ -219,15 +219,15 @@ void HC06_Task(void)
     // Update_TargetFromButtons();
 
     // ---- 调试: 每500ms打印一次状态 ----
-    static uint64_t last_dbg_time = 0;
-    if (time_us - last_dbg_time > 500000) {
-        printf("DBG: armed=%d flag=%d px=%.1f py=%.1f vx=%.3f vy=%.3f go_center=%d bcn_nav=%d\n",
-               mission_armed, drone_beacon_flag,
-               GetPositionErrorX(), GetPositionErrorY(),
-               target_vx, target_vy,
-               go_center, bcn_nav_on);
-        last_dbg_time = time_us;
-    }
+//    static uint64_t last_dbg_time = 0;
+//    if (time_us - last_dbg_time > 500000) {
+//        printf("DBG: armed=%d flag=%d px=%.1f py=%.1f vx=%.3f vy=%.3f go_center=%d bcn_nav=%d\n",
+//               mission_armed, drone_beacon_flag,
+//               GetPositionErrorX(), GetPositionErrorY(),
+//               target_vx, target_vy,
+//               go_center, bcn_nav_on);
+//        last_dbg_time = time_us;
+//    }
 }
 
 void HC06_SendDroneCmd(uint8_t cmd)

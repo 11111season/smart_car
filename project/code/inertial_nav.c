@@ -16,7 +16,7 @@
 #define INAV_MODE  1   // 0=五信标链式循环  1=航点巡逻
 
 /*==================================================== 编码器 ====================================================*/
-#define BCN_ENC_CALIB  4.30f
+#define BCN_ENC_CALIB  4.30f   // 2026-08-12 用户指示改回 4.30 (4.40 下整体地图跑久偏右漂移; 4.40 源于 v1.4.9 打滑污染的前进测量)
 
 static float enc2m(int32_t p) {
     return (float)p / ENCODER_PULSES_PER_REV * ENCODER_GEAR_RATIO * WHEEL_CIRCUMFERENCE * BCN_ENC_CALIB;
@@ -232,8 +232,10 @@ static void bcn_build_waypoints(void)
     for (int i = 0; i < bcn_max; i++) wp_abs[i] = bcn_abs[i];
     if (launch_enable) {
         // 发车区航点 = 起点(世界原点) + 菜单偏移; 世界系 x=前 y=左 (与 g_pos 一致)
-        wp_abs[bcn_max].x = (float)launch_off_x * 0.1f;
-        wp_abs[bcn_max].y = (float)launch_off_y * 0.1f;
+        // v1.4.9: 菜单 y 约定"左正右负"(App_menu.h), 但小车里程帧实测物理+y=右 → 入口翻转符号, 使菜单正Y=物理左
+        // v2.7.0: 偏移单位 0.1m → 0.01m (支持 0.05m 步长)
+        wp_abs[bcn_max].x = (float)launch_off_x * 0.01f;
+        wp_abs[bcn_max].y = -(float)launch_off_y * 0.01f;
         printf("INAV: LAUNCH wp(%.2f,%.2f)\n", wp_abs[bcn_max].x, wp_abs[bcn_max].y);
     }
     printf("INAV: %d wp:", wp_max);
@@ -342,6 +344,16 @@ void Inav_RecEnd(void)
     bcn_idx++;
 }
 
+// 坐标模式: 直写第 idx 个航点绝对坐标 (x/y 单位0.01m, v2.8.0 起坐标输入走 0.01m 精度; 菜单约定 y 左正右负 → 存时翻转与里程帧一致, 同发车区偏移点处理)
+void Inav_SetWaypoint(uint8_t idx, int16 x_cent, int16 y_cent)
+{
+    if (idx >= bcn_max) return;   // 超出设置数量: 忽略
+    bcn_abs[idx].x = (float)x_cent * 0.01f;
+    bcn_abs[idx].y = -(float)y_cent * 0.01f;   // y 翻转: 菜单左正右负 → 物理+y=右 (与 bcn_build_waypoints 发车区偏移一致)
+    printf("INAV: B%d set(%.2f,%.2f)\n", idx + 1, bcn_abs[idx].x, bcn_abs[idx].y);
+    if (idx >= bcn_idx) bcn_idx = idx + 1;   // 更新已记录计数 (Inav_CanLaunch 用)
+}
+
 // 全部录完: bcn_abs → wp_abs (含发车区航点) + 预计算每段距离/方向
 void Inav_BuildMap(void)
 {
@@ -355,7 +367,7 @@ const flash_wp_t* Inav_GetMap(void) { return bcn_abs; }
 // 重算 bcn_max/wp_max (菜单设置变化后调用)
 void Inav_UpdateMax(void)
 {
-    if (wp_set < 1)   wp_set = 1;
+    // v1.4.9: 允许 0 航点 (= 不记录惯导, 仅发车区偏移点当唯一惯导点). 原保底 1 会把菜单设的 0 强制拉回 1.
     if (wp_set > FLASH_WP_MAX) wp_set = FLASH_WP_MAX;
     bcn_max = wp_set;
     wp_max  = bcn_max + (launch_enable ? 1 : 0);
@@ -377,7 +389,7 @@ void Inav_LoadMap(void)
         bcn_idx++;
     }
     bcn_pos.x = 0.0f; bcn_pos.y = 0.0f;
-    if (bcn_idx > 0) bcn_build_waypoints();
+    if (bcn_idx > 0 || launch_enable) bcn_build_waypoints();   // v1.4.9: 0航点+启用发车区 → 也要构建发车区航点 (wp_abs[0]=偏移点)
     printf("INAV: map loaded (%d wp), bcn_max=%d wp_max=%d\n", bcn_idx, bcn_max, wp_max);
 }
 
@@ -470,8 +482,9 @@ void InertialNav_Update(void)
         float err_y = tgt->y - g_pos_y;
         float err = sqrtf(err_x*err_x + err_y*err_y);
 
-        if (err <= 0.15f || (fabsf(err_x) < 0.02f && fabsf(err_y) < 0.15f)) {
-            // 已到达航点，原地等待3秒
+        if (err <= 0.03f || (fabsf(err_x) < 0.02f && fabsf(err_y) < 0.15f)) {
+            // v1.4.9: 到达死区 0.15→0.03 (0航点1m实测要贴近目标停; 侧向兜底条件保留)
+            // 已到达航点，原地等待
             bcn_nav_vx = 0.0f; bcn_nav_vy = 0.0f; bcn_nav_angle = 0.0f;
             bcn_nav_on = 0;
             target_vx = 0.0f; target_vy = 0.0f;

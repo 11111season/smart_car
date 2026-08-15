@@ -148,6 +148,21 @@ typedef enum
     MENU_CHN_WEI    = 95,   // 位
     MENU_CHN_HUAN   = 96,   // 环 (位置环: 位=WEI 环=HUAN)
 
+    /* ---- 2026-08-12 0航点(仅发车区偏移点)缺字 (字形已由用户取模填入 menu_font.c 97) ---- */
+    MENU_CHN_LING   = 97,   // 零 (航点数量可设 0 = 不记录, 仅发车区偏移点当唯一惯导点)
+
+    /* ---- 2026-08-12 设置航点记录模式缺字 (字形已由用户取模填入 menu_font.c 98-103) ---- */
+    MENU_CHN_MO     = 98,   // 模 (模式)
+    MENU_CHN_SHI4   = 99,   // 式 (始=SHI 已占, 史=SHI2 已占, 是=SHI3 已占, 同音字后缀4)
+    MENU_CHN_XUAN   = 100,  // 选 (选择)
+    MENU_CHN_ZE     = 101,  // 择 (选择)
+    MENU_CHN_SHOU   = 102,  // 手 (手动)
+    MENU_CHN_WEI2   = 103,  // 为 (位=WEI 已占, 同音字后缀2; 坐标为)
+
+    /* ---- 2026-08-12 设置步长缺字 (字形由用户取模填入 menu_font.c 104-105) ---- */
+    MENU_CHN_BU      = 104,  // 步 (步长)
+    MENU_CHN_CHANG   = 105,  // 长 (步长)
+
     MENU_CHN_COUNT,          // 字库总字数 (自动递增, 勿手动改)
 } menu_chn_idx_enum;
 

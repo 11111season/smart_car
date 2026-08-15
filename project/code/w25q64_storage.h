@@ -10,10 +10,10 @@
 * 存储区域划分 (扇区对齐, 人为分区便于管理):
 *   Region 1 @ 0x000000 (扇区0): 惯导地图数据 — 航点地图
 *       格式: [1字节数量][数量×8字节坐标], 最多 FLASH_WP_MAX=9 个航点, 有多少航点记录多少
-*   Region 2 @ 0x001000 (扇区1): 设置参数 — 航点数量 + 发车区设置 + 惯导速度限幅 + 位置环速度限幅
-*       格式: 12字节 flash_settings_t (magic 校验)
+*   Region 2 @ 0x001000 (扇区1): 设置参数 — 航点数量 + 记录模式 + 步长(发车区/坐标模式) + 惯导速度限幅 + 位置环速度限幅
+*       格式: 14字节 flash_settings_t (magic 校验)
 *
-* 上电流程: init.c 读 Region2 → 覆盖菜单全局 (wp_set/launch_enable/launch_off_x/y/spd_limit_x/y/pos_limit_x/y)
+* 上电流程: init.c 读 Region2 → 覆盖菜单全局 (wp_set/launch_enable/launch_off_x/y/launch_step/spd_limit_x/y/pos_limit_x/y)
 *           → 再由 Inav_LoadMap() 读 Region1 → 设 bcn_max/wp_max + 构建导航航点
 * 修改记录
 * 日期        作者        备注
@@ -27,7 +27,7 @@
 
 // ====================================================区域与常量====================================================
 #define FLASH_WP_MAX        9            // 航点物理上限 (与惯性导航数组上限一致)
-#define FLASH_MAGIC         0x5A         // 设置区有效标志 (读回非该值 = 未写入/已清除)
+#define FLASH_MAGIC         0x5C         // 设置区有效标志 (v2.8.0: 新增 coord_step, 0x5B 老数据作废)
 
 #define FLASH_MAP_ADDR      0x000000     // Region 1: 航点地图 (扇区0)
 #define FLASH_SETTINGS_ADDR 0x001000     // Region 2: 设置参数 (扇区1)
@@ -36,14 +36,16 @@
 // 航点坐标 (m), 与惯性导航 pt_t 同布局 (float x, float y)
 typedef struct { float x, y; } flash_wp_t;
 
-// Region 2 设置结构体 (12 字节)
+// Region 2 设置结构体 (14 字节)
 typedef struct {
-    uint8  magic;          // 0x5A = 已写入
+    uint8  magic;          // 0x5C = 已写入 (v2.8.0 起)
     uint8  wp_set;         // 航点总数 (不含发车区) = 惯导 BCN_MAX
     uint8  launch_enable;  // 发车区航点启用 (1/0), 决定 WP_MAX 是否 +1
-    uint8  _pad;           // 对齐填充
-    int16  launch_off_x;   // 发车区偏移 x (0.1m, 菜单步进, 范围 ±2m)
-    int16  launch_off_y;   // 发车区偏移 y (0.1m, 菜单步进, 范围 ±2m)
+    uint8  rec_mode;       // 航点记录模式 (0=手动推车 1=坐标输入), 复用原填充字节, 旧数据0=手动
+    uint8  launch_step;    // 发车区偏移步长 (0.05m, 1~10 → 0.05~0.50m, 默认4=0.20m)
+    uint8  coord_step;     // 坐标模式航点输入步长 (0.05m, 1~10 → 0.05~0.50m, 默认4=0.20m)
+    int16  launch_off_x;   // 发车区偏移 x (0.01m, 范围 ±200 = ±2.00m, 前正后负)
+    int16  launch_off_y;   // 发车区偏移 y (0.01m, 范围 ±200 = ±2.00m, 左正右负)
     uint8  spd_limit_x;    // 惯导速度限幅 x (0.05m/s, 菜单步进, 范围 0~0.5m/s → 存0~10)
     uint8  spd_limit_y;    // 惯导速度限幅 y (0.05m/s, 菜单步进, 范围 0~0.5m/s → 存0~10)
     uint8  pos_limit_x;    // 位置环速度限幅 x (0.05m/s, 菜单步进, 范围 0~0.5m/s → 存0~10)
@@ -51,7 +53,7 @@ typedef struct {
 } flash_settings_t;
 
 // ====================================================函数声明====================================================
-// 保存设置区 (Region2): 擦除扇区1 + 写入12字节
+// 保存设置区 (Region2): 擦除扇区1 + 写入14字节
 void    FlashStore_SaveSettings(const flash_settings_t *s);
 
 // 读取设置区 (Region2): 返回 1=读到有效数据(magic匹配), 0=空/未初始化

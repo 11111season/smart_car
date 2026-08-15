@@ -72,6 +72,29 @@
 *                                                           · 接线: motor.c PositionControl_Update 每周期用 pos_limit_x/y 同步位置PID输出限幅 (替代硬编码 POS_V_MAX)
 *                                                           · 清除历史数据 一并清零位置环限幅恢复默认0.30m/s
 *                                                           · 缺字 位/环 已由用户取模填入 menu_font.c 95-96
+* 2026-08-12        Claude                             v2.6.0 设置航点记录模式 (惯导设置二级第2项, 记录航点/设置航点数量 之间):
+*                                                           · 二级新增"设置航点记录模式": 请选择记录模式：手动/坐标
+*                                                           · 进入页: 手动默认闪烁 (KEY_1 切换 手动↔坐标, 未确认闪烁, KEY_2 确认 → 写W25Q64设置区 → 直接回二级)
+*                                                           · rec_mode 存 flash_settings_t 原 _pad 字节 (旧数据0=手动, 布局不变仍12字节)
+*                                                           · 手动模式: 记录航点流程与 v2.3.0 完全一致 (首次KEY_4取消闭环)
+*                                                           · 坐标模式: 记录航点不取消闭环(保持), 直接进坐标输入
+*                                                                      第二行"请输入第n个航点坐标"(n随wp_cur变 一/二/三), 第三行x坐标为:, 第四行y坐标为:
+*                                                           · x/y 同发车区偏移逻辑: KEY_1 +0.2m KEY_4 -0.2m, 带符号位, 范围 ±9.9m (存int16 0.1m单位 ±99)
+*                                                           · 每航点两次KEY_2确认(先x后y) → Inav_SetWaypoint 直写 bcn_abs[wp_cur], y左正右负存储翻转
+*                                                           · 录完最后一个 → Inav_BuildMap + 写W25Q64航点地图区 → "所有航点记录完毕" 1s回二级
+*                                                           · 缺字 模/式/选/择/手/为 已由用户取模填入 menu_font.c 98-103
+* 2026-08-12        Claude                             v2.7.0 设置步长 (发车区偏移输入前插入步长设置页, 验证试点):
+*                                                           · 发车区航点设置选"是"后, 进偏移xy前新增"请设置步长"页
+*                                                           · 步长 KEY_1 +0.05m 封顶0.50, KEY_4 -0.05m 保底0.05, 无符号位, 未确认闪烁, KEY_2 确认 → 进偏移x
+*                                                           · 偏移x/y 步进改由步长驱动 (原硬编码 0.2m); 步长存 flash_settings_t 新字段 launch_step (0.05m, 1~10, 默认4=0.20m)
+*                                                           · 偏移值 0.1m → 0.01m 单位 (int16 ±200 = ±2.00m, 显示两位小数); W25Q64 magic 0x5A→0x5B, 老偏移作废需重设
+*                                                           · 验证通过后逐步加到坐标模式等其它需要步长的地方 (未扩展, 见 TECH_NOTES 待解决)
+*                                                           · 缺字 步/长 由用户取模填入 menu_font.c 104-105
+* 2026-08-14        Claude                             v2.8.0 设置步长推广到坐标模式航点输入:
+*                                                           · 坐标模式进"记录航点"前插入步长设置页 (复用"请设置步长"页, 新字段 coord_step)
+*                                                           · coord_step 独立于 launch_step (0.05m, 1~10, 默认4=0.20m); W25Q64 magic 0x5B→0x5C 老设置作废
+*                                                           · 坐标值 0.1m → 0.01m 单位 (int16 ±800 = ±8.00m, 显示两位小数); 步进 coord_step*5
+*                                                           · Inav_SetWaypoint 改 0.01m 单位入参 (0.05m 步长可精确表示)
 ********************************************************************************************************************/
 
 #include "App_menu.h"
@@ -94,7 +117,12 @@ typedef enum{
     STATE_INR_WP_START,          //请开始记录第X个航点 (KEY_4 开始记录)
     STATE_INR_WP_REC,            //等待第X个航点记录完成 (KEY_4 结束记录)
     STATE_INR_WP_DONE,           //所有航点记录完毕 (1s 后自动回惯导二级)
+    STATE_INR_REC_MODE,          //设置航点记录模式: 请选择记录模式：手动/坐标 (KEY_1 切换, KEY_2 确认, 未确认闪烁)
+    STATE_INR_COORD_X,           //请输入第n个航点坐标: 第三行 x坐标为: (KEY_1 +0.2 封顶+9.9, KEY_4 -0.2 保底-9.9, KEY_2 确认, 闪烁)
+    STATE_INR_COORD_Y,           //请输入第n个航点坐标: 第四行 y坐标为: (x 已确认, y 闪烁; KEY_2 确认 → 写第n个航点)
+    STATE_INR_COORD_STEP,        //请设置步长 (坐标模式): 步长:0.XX米 (KEY_1 +0.05 封顶0.50, KEY_4 -0.05 保底0.05, 无符号位, KEY_2 确认 → 进坐标x, 闪烁)
     STATE_INR_LAUNCH_ENABLE,     //发车区航点设置: 是否启用发车区航点：是/否 (KEY_1 切换, KEY_2 确认, 未确认闪烁)
+    STATE_INR_LAUNCH_STEP,       //请设置步长: 步长:0.XX米 (KEY_1 +0.05 封顶0.50, KEY_4 -0.05 保底0.05, 无符号位, KEY_2 确认, 闪烁)
     STATE_INR_LAUNCH_DISABLED,   //已禁用发车区航点 (1s 后自动回二级)
     STATE_INR_LAUNCH_OFFSET_X,   //请输入偏移坐标: 设置偏移x (第三行白框*, x 闪烁)
     STATE_INR_LAUNCH_OFFSET_Y,   //请输入偏移坐标: 设置偏移y (第四行白框*, y 闪烁, x 定住)
@@ -121,11 +149,15 @@ static uint8_t  rec_cancel_done = 0;   // 记录页第一次KEY_4是否已取消
 static uint8_t  set_num         = 1;   // 设置页实时调整值 (进入页重置为1)
 static uint8_t  set_blink_last  = 0xFF;// 上次闪烁相位 (用于闪烁变化检测)
 static uint16_t auto_back_tick  = 0;   // 自动返回计时起点 (menu_tick_10ms)
+static int16    coord_x         = 0;   // 坐标模式输入 x (单位0.01m, 范围 -800~+800 = ±8.00m, 前正后负)
+static int16    coord_y         = 0;   // 坐标模式输入 y (单位0.01m, 范围 -800~+800 = ±8.00m, 左正右负)
 
 /* 发车区航点设置配置 (非 static, 后续控制逻辑经 App_menu.h 读取) */
 uint8_t launch_enable = 1;             // 发车区航点启用 (1=启用 0=禁用); 实际总航点数 = wp_set + launch_enable
-int16   launch_off_x  = 0;             // 发车区偏移x (单位0.1m, 范围 -20~+20, 前正后负, 对应小车 vx)
-int16   launch_off_y  = 0;             // 发车区偏移y (单位0.1m, 范围 -20~+20, 左正右负, 对应小车 vy)
+uint8_t launch_step   = 4;             // 发车区偏移步长 (单位0.05m, 范围 1~10 → 0.05~0.50m, 默认4=0.20m; 上电由W25Q64覆盖)
+uint8_t coord_step    = 4;             // 坐标模式航点输入步长 (单位0.05m, 范围 1~10 → 0.05~0.50m, 默认4=0.20m; 上电由W25Q64覆盖)
+int16   launch_off_x  = 0;             // 发车区偏移x (单位0.01m, 范围 -200~+200, 前正后负, 对应小车 vx)
+int16   launch_off_y  = 0;             // 发车区偏移y (单位0.01m, 范围 -200~+200, 左正右负, 对应小车 vy)
 
 /* 惯导速度限幅 (非 static, 后续控制逻辑经 App_menu.h 读取) */
 uint8_t spd_limit_x = 6;               // 惯导速度限幅x (单位0.05m/s, 范围 0~10 → 0~0.5m/s; 默认0.30m/s 与 POS_MAX 一致)
@@ -135,19 +167,26 @@ uint8_t spd_limit_y = 6;               // 惯导速度限幅y (同上, 默认0.3
 uint8_t pos_limit_x = 6;               // 位置环速度限幅x (单位0.05m/s, 范围 0~10 → 0~0.5m/s; 默认0.30m/s 与 POS_V_MAX 一致)
 uint8_t pos_limit_y = 6;               // 位置环速度限幅y (同上, 默认0.30m/s)
 
-/* 发车区设置页闪烁局部变量 */
+/* 航点记录模式 (非 static, 后续控制逻辑经 App_menu.h 读取) */
+uint8_t rec_mode = 0;                  // 记录模式: 0=手动推车记录 1=坐标输入; 上电由W25Q64覆盖
+
+/* 发车区/限幅/记录模式 设置页闪烁局部变量 */
 static uint8_t  launch_blink_last = 0xFF;   // 发车区设置闪烁相位 (上次值)
 static uint8_t  spd_blink_last    = 0xFF;   // 速度限幅设置闪烁相位 (上次值)
 static uint8_t  pos_blink_last    = 0xFF;   // 位置环限幅设置闪烁相位 (上次值)
+static uint8_t  rec_mode_blink_last = 0xFF; // 记录模式切换闪烁相位 (上次值)
+static uint8_t  coord_blink_last   = 0xFF;  // 坐标输入闪烁相位 (上次值)
 
 /* 当前菜单配置 → W25Q64 Region2 (设置区: 航点数量 + 发车区启用标志 + 偏移xy + 惯导/位置环速度限幅) */
 static void menu_save_settings(void)
 {
     flash_settings_t st;
-    st._pad          = 0;                 // 填充字节清零, 避免读回校验意外
+    st.rec_mode      = rec_mode;          // 记录模式 (0=手动 1=坐标)
     st.magic         = FLASH_MAGIC;
     st.wp_set        = wp_set;
     st.launch_enable = launch_enable;
+    st.launch_step   = launch_step;       // 发车区偏移步长 (0.05m, 1~10)
+    st.coord_step    = coord_step;        // 坐标模式航点输入步长 (0.05m, 1~10)
     st.launch_off_x  = launch_off_x;
     st.launch_off_y  = launch_off_y;
     st.spd_limit_x   = spd_limit_x;
@@ -155,11 +194,11 @@ static void menu_save_settings(void)
     st.pos_limit_x   = pos_limit_x;
     st.pos_limit_y   = pos_limit_y;
     FlashStore_SaveSettings(&st);
-    printf("FLASH: settings saved (wp=%d en=%d off=%d,%d spd=%d,%d pos=%d,%d)\n",
-           wp_set, launch_enable, launch_off_x, launch_off_y, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y);
+    printf("FLASH: settings saved (wp=%d en=%d off=%d,%d step=%d cstep=%d spd=%d,%d pos=%d,%d rec=%d)\n",
+           wp_set, launch_enable, launch_off_x, launch_off_y, launch_step, coord_step, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y, rec_mode);
 }
 
-#define MENU_SET_MAX            9     // 航点数设置上限 (对应字模一~九)
+#define MENU_SET_MAX            9     // 航点数设置上限 (对应字模零~九; 0 = 不记录惯导, 仅发车区偏移点)
 #define MENU_SET_NUM_X          152   // 设置页 num 显示 x (文字占8字128px + ':' 8px + 4px间距)
 #define MENU_SET_BLINK_TICKS    20    // num 闪烁半周期: 200ms (20 × 10ms)
 #define MENU_AUTO_BACK_TICKS    100   // 自动返回延迟: 1s (100 × 10ms)
@@ -172,9 +211,18 @@ static void menu_save_settings(void)
 #define MENU_TEXT_X      12      // 行文字 x
 #define MENU_STR_X       216     // * 号 x (最右, 8px边距)
 
-/* 发车区航点设置排版: 偏移行 = 偏移(2字) + x/y(8px) + 坐标(2字) + ':'(8px) + 数值(4×8px) + 米(16px) */
+/* 发车区航点设置排版: 偏移行 = 偏移(2字) + x/y(8px) + 坐标(2字) + ':'(8px) + 数值(5×8px) + 米(16px) */
 #define MENU_LAUNCH_TOGGLE_X   (MENU_TEXT_X + 9*MENU_CHN_W + 8)   // 是/否 x: 是否启用发车区航点 9字 + ':' (156)
 #define MENU_OFF_VAL_X         (MENU_TEXT_X + 4*MENU_CHN_W + 16)  // 偏移坐标值 x: 偏移32+x8+坐标32+:8 (92)
+/* 设置步长排版: 步长(2字=32px) + ':'(8px); 数值 4字符 + 米(16px) */
+#define MENU_STEP_COLON_X      (MENU_TEXT_X + 2*MENU_CHN_W)       // ':' x (44)
+#define MENU_STEP_VAL_X        (MENU_STEP_COLON_X + 8)            // 数值 x (52)
+#define MENU_STEP_MI_X         (MENU_STEP_VAL_X + 4*8)            // 米 x (84)
+
+/* 设置航点记录模式排版: 手动/坐标 = 请选择记录模式 7字 + ':' (8px) 之后 */
+#define MENU_REC_MODE_TOGGLE_X (MENU_TEXT_X + 7*MENU_CHN_W + 8)   // 手动/坐标 x (132)
+/* 坐标输入排版: 坐标为 = x/y(8px) + 坐标为(3字=48px) + ':'(8px); 数值 x = 12+64=76, 5字符(±.XX) + 米 */
+#define MENU_COORD_VAL_X       (MENU_TEXT_X + 64)                 // 坐标值 x (76, v2.8.0 起两位小数)
 
 /* 惯导速度限幅排版: 速度限幅行 = x/y(8px) + 速度限幅/限制(4字=64px) + ':'(8px) + 数值(4×8px) + m/s(3×8px) */
 #define MENU_SPD_LABEL_X       (MENU_TEXT_X + 8)                  // 速度限幅/限制 汉字起点: x/y 之后 (20)
@@ -211,7 +259,15 @@ static const menu_chn_idx_enum TXT_FACHEQU_SHEZHI_WANBI[]      = { MENU_CHN_FA, 
 static const menu_chn_idx_enum TXT_PIAN_YI[]                   = { MENU_CHN_PIAN, MENU_CHN_YI3 };   // 偏移
 static const menu_chn_idx_enum TXT_ZUO_BIAO[]                  = { MENU_CHN_ZUO, MENU_CHN_BIAO };   // 坐标
 static const menu_chn_idx_enum TXT_MI[]                        = { MENU_CHN_MI };                   // 米
+static const menu_chn_idx_enum TXT_BU_CHANG[]                  = { MENU_CHN_BU, MENU_CHN_CHANG };   // 步长
+static const menu_chn_idx_enum TXT_QING_SHEZHI_BUCHANG[]       = { MENU_CHN_QING2, MENU_CHN_SHE, MENU_CHN_ZHI3, MENU_CHN_BU, MENU_CHN_CHANG };  // 请设置步长
 static const menu_chn_idx_enum TXT_LAUNCH_TOGGLE[]             = { MENU_CHN_SHI3, MENU_CHN_FOU };   // 是/否 (切换用, 与 launch_enable 对应)
+
+/* 设置航点记录模式 */
+static const menu_chn_idx_enum TXT_SHEZHI_JILU_MOSHI[]       = { MENU_CHN_SHE, MENU_CHN_ZHI3, MENU_CHN_JI, MENU_CHN_LU, MENU_CHN_HANG, MENU_CHN_DIAN, MENU_CHN_MO, MENU_CHN_SHI4 };  // 设置航点记录模式
+static const menu_chn_idx_enum TXT_QING_XUANZE_JILU_MOSHI[]  = { MENU_CHN_QING2, MENU_CHN_XUAN, MENU_CHN_ZE, MENU_CHN_JI, MENU_CHN_LU, MENU_CHN_MO, MENU_CHN_SHI4 };  // 请选择记录模式
+static const menu_chn_idx_enum TXT_REC_MODE_TOGGLE[]         = { MENU_CHN_SHOU, MENU_CHN_DONG, MENU_CHN_ZUO, MENU_CHN_BIAO };   // 手动/坐标 (切换用, 与 rec_mode 对应)
+static const menu_chn_idx_enum TXT_WEI_ZUO_BIAO[]            = { MENU_CHN_WEI2, MENU_CHN_ZUO, MENU_CHN_BIAO };                  // 坐标为 (x/y 行后缀)
 
 /* 惯导速度限幅 */
 static const menu_chn_idx_enum TXT_SHEZHI_SUDU_XIANFU[]        = { MENU_CHN_SHE, MENU_CHN_ZHI3, MENU_CHN_GUAN, MENU_CHN_DAO, MENU_CHN_SU, MENU_CHN_DU2, MENU_CHN_XIAN, MENU_CHN_FU };  // 设置惯导速度限幅
@@ -243,8 +299,9 @@ static const menu_text_t MAIN_ROWS[4] = {
     { TXT_SHEZHI_WEIZHIHUAN_SUDU_XIANFU, 9 },   // 设置位置环速度限幅
     { TXT_TINGZHI_RENWU,                8 },   // 停止所有控制任务
 };
-static const menu_text_t INR_ROWS[5] = {
+static const menu_text_t INR_ROWS[6] = {
     { TXT_JILU_HANGDIAN,            4 },    // 记录航点
+    { TXT_SHEZHI_JILU_MOSHI,        8 },    // 设置航点记录模式
     { TXT_SHEZHI_HANGDIANSHU,       6 },    // 设置航点数量
     { TXT_FACHEQU_HANGDIAN_SHEZHI,  7 },    // 发车区航点设置
     { TXT_SHEZHI_SUDU_XIANFU,       8 },    // 设置惯导速度限幅
@@ -328,13 +385,13 @@ static menu_text_t menu_wp_line(uint8_t kind)
     return t;
 }
 
-/* 设置航点数量页: 画 num (红字一~九, 落在白底上) */
+/* 设置航点数量页: 画 num (红字零~九, 落在白底上) */
 static void menu_draw_set_num(void)
 {
-    static const menu_chn_idx_enum NUM[] = { MENU_CHN_YI, MENU_CHN_ER, MENU_CHN_SAN, MENU_CHN_SI, MENU_CHN_WU,
-                                             MENU_CHN_LIU, MENU_CHN_QI, MENU_CHN_BA, MENU_CHN_JIU };  // 一~九
+    static const menu_chn_idx_enum NUM[] = { MENU_CHN_LING, MENU_CHN_YI, MENU_CHN_ER, MENU_CHN_SAN, MENU_CHN_SI,
+                                             MENU_CHN_WU, MENU_CHN_LIU, MENU_CHN_QI, MENU_CHN_BA, MENU_CHN_JIU };  // 零~九
     menu_text_t t;
-    t.chars = &NUM[(set_num <= MENU_SET_MAX) ? (set_num - 1) : 8];
+    t.chars = &NUM[(set_num <= MENU_SET_MAX) ? set_num : MENU_SET_MAX];
     t.num   = 1;
     menu_show_text(MENU_SET_NUM_X, MENU_ROW_Y0 + 2, &t, RGB565_RED);
 }
@@ -365,6 +422,18 @@ static void menu_show_offset_val(int16 v_tenths, uint16 x, uint16 y)
     ips200_show_char(x + 24, y, (char)('0' + absv % 10));
 }
 
+/* 发车区偏移值 (0.01m 单位) → 5 个 ASCII 字符: 符号 + 整数位 + 小数点 + 两位小数 (如 +2.00 / -0.15 / +0.05)
+ * v2.7.0: 步长最小 0.05m → 偏移需两位小数分辨率 (原 0.1m 单位只显示一位) */
+static void menu_show_offset_val_cm(int16 v_cent, uint16 x, uint16 y)
+{
+    uint16 absv = (v_cent < 0) ? (uint16)(-v_cent) : (uint16)v_cent;
+    ips200_show_char(x,      y, (v_cent < 0) ? '-' : '+');
+    ips200_show_char(x +  8, y, (char)('0' + absv / 100));        // 整数位 (0~2)
+    ips200_show_char(x + 16, y, '.');
+    ips200_show_char(x + 24, y, (char)('0' + (absv / 10) % 10));  // 十分位
+    ips200_show_char(x + 32, y, (char)('0' + absv % 10));         // 百分位
+}
+
 /* 只重绘偏移行中的数值区 (按键调整 / 闪烁用, 不重绘整行) */
 static void menu_draw_offset_val_only(uint8_t line_idx, uint8_t is_x, uint8_t selected, uint8_t visible)
 {
@@ -373,16 +442,16 @@ static void menu_draw_offset_val_only(uint8_t line_idx, uint8_t is_x, uint8_t se
     if (visible)
     {
         ips200_set_color(RGB565_RED, bg);
-        menu_show_offset_val(is_x ? launch_off_x : launch_off_y, MENU_OFF_VAL_X, y + 2);
+        menu_show_offset_val_cm(is_x ? launch_off_x : launch_off_y, MENU_OFF_VAL_X, y + 2);
         if (selected) ips200_set_color(RGB565_RED, RGB565_BLACK);
     }
     else
     {
-        menu_fill_rect(MENU_OFF_VAL_X, y, MENU_OFF_VAL_X + 4*8 - 1, y + MENU_ROW_H - 1, bg);  // 底色盖掉 = 灭相位
+        menu_fill_rect(MENU_OFF_VAL_X, y, MENU_OFF_VAL_X + 5*8 - 1, y + MENU_ROW_H - 1, bg);  // 底色盖掉 = 灭相位
     }
 }
 
-/* 偏移坐标整行: 偏 移 x/y 坐 标 : ±..米; selected=1 白框*, 0 黑底红字 */
+/* 偏移坐标整行: 偏 移 x/y 坐 标 : ±.XX米 (0.01m 单位两位小数); selected=1 白框*, 0 黑底红字 */
 static void menu_draw_offset_line(uint8_t line_idx, uint8_t is_x, uint8_t selected, uint8_t val_visible)
 {
     uint16 y = MENU_ROW_Y0 + line_idx*MENU_ROW_H;
@@ -397,9 +466,9 @@ static void menu_draw_offset_line(uint8_t line_idx, uint8_t is_x, uint8_t select
     ips200_show_char(MENU_TEXT_X + 2*MENU_CHN_W,   y + 2, is_x ? 'x' : 'y');                // x/y
     menu_show_text(MENU_TEXT_X + 2*MENU_CHN_W + 8, y + 2, &t_zb, RGB565_RED);               // 坐标
     ips200_show_char(MENU_TEXT_X + 4*MENU_CHN_W + 8, y + 2, ':');                           // :
-    if (val_visible) menu_show_offset_val(is_x ? launch_off_x : launch_off_y, MENU_OFF_VAL_X, y + 2);   // 数值
-    else             menu_fill_rect(MENU_OFF_VAL_X, y, MENU_OFF_VAL_X + 4*8 - 1, y + MENU_ROW_H - 1, bg);
-    menu_show_text(MENU_OFF_VAL_X + 4*8, y + 2, &t_mi, RGB565_RED);                         // 米
+    if (val_visible) menu_show_offset_val_cm(is_x ? launch_off_x : launch_off_y, MENU_OFF_VAL_X, y + 2);   // 数值
+    else             menu_fill_rect(MENU_OFF_VAL_X, y, MENU_OFF_VAL_X + 5*8 - 1, y + MENU_ROW_H - 1, bg);
+    menu_show_text(MENU_OFF_VAL_X + 5*8, y + 2, &t_mi, RGB565_RED);                         // 米
     if (selected) ips200_show_char(MENU_STR_X, y + 2, '*');
     if (selected) ips200_set_color(RGB565_RED, RGB565_BLACK);                               // 恢复黑背景
 }
@@ -451,6 +520,42 @@ static void menu_draw_spd_line(uint8_t line_idx, const uint8_t *v, uint8_t is_x,
     if (selected) ips200_set_color(RGB565_RED, RGB565_BLACK);                  // 恢复黑背景
 }
 
+/* 只重绘步长行中的数值区 (按键调整 / 闪烁用, 不重绘整行); v = 值源指针 (发车区 launch_step / 坐标模式 coord_step), 0.05m 单位, 复用速度限幅显示 (0.XX) */
+static void menu_draw_step_val_only(uint8_t line_idx, const uint8_t *v, uint8_t selected, uint8_t visible)
+{
+    uint16 y = MENU_ROW_Y0 + line_idx*MENU_ROW_H;
+    uint16 bg = selected ? RGB565_WHITE : RGB565_BLACK;
+    if (visible)
+    {
+        ips200_set_color(RGB565_RED, bg);
+        menu_show_spd_val(*v, MENU_STEP_VAL_X, y + 2);
+        if (selected) ips200_set_color(RGB565_RED, RGB565_BLACK);
+    }
+    else
+    {
+        menu_fill_rect(MENU_STEP_VAL_X, y, MENU_STEP_VAL_X + 4*8 - 1, y + MENU_ROW_H - 1, bg);  // 底色盖掉 = 灭相位
+    }
+}
+
+/* 步长整行: 步 长 : 0.XX 米; v = 值源指针 (launch_step/coord_step), selected=1 白框*, 0 黑底红字 */
+static void menu_draw_step_line(uint8_t line_idx, const uint8_t *v, uint8_t selected, uint8_t val_visible)
+{
+    uint16 y = MENU_ROW_Y0 + line_idx*MENU_ROW_H;
+    uint16 bg = selected ? RGB565_WHITE : RGB565_BLACK;
+    menu_text_t t_bc = MT(TXT_BU_CHANG);   // 步长
+    menu_text_t t_mi = MT(TXT_MI);         // 米
+
+    menu_fill_rect(0, y, MENU_SCREEN_W - 1, y + MENU_ROW_H - 1, bg);
+    ips200_set_color(RGB565_RED, bg);
+    menu_show_text(MENU_TEXT_X, y + 2, &t_bc, RGB565_RED);                    // 步长
+    ips200_show_char(MENU_STEP_COLON_X, y + 2, ':');                          // :
+    if (val_visible) menu_show_spd_val(*v, MENU_STEP_VAL_X, y + 2);           // 0.XX
+    else             menu_fill_rect(MENU_STEP_VAL_X, y, MENU_STEP_VAL_X + 4*8 - 1, y + MENU_ROW_H - 1, bg);
+    menu_show_text(MENU_STEP_MI_X, y + 2, &t_mi, RGB565_RED);                 // 米
+    if (selected) ips200_show_char(MENU_STR_X, y + 2, '*');
+    if (selected) ips200_set_color(RGB565_RED, RGB565_BLACK);                 // 恢复黑背景
+}
+
 /* 是否启用发车区航点： 后面的 是/否 (白底红字, 由 launch_enable 决定) */
 static void menu_draw_launch_toggle(void)
 {
@@ -476,6 +581,87 @@ static void menu_draw_launch_enable_line(void)
     menu_draw_launch_toggle();                               // 是/否
 }
 
+/* 手动/坐标 切换值 (白底红字, 由 rec_mode 决定) */
+static void menu_draw_rec_mode_toggle(void)
+{
+    menu_text_t t;
+    t.chars = &TXT_REC_MODE_TOGGLE[rec_mode ? 2 : 0];   // 0=手动, 1=坐标
+    t.num   = 2;
+    ips200_set_color(RGB565_RED, RGB565_WHITE);
+    menu_show_text(MENU_REC_MODE_TOGGLE_X, MENU_ROW_Y0 + 2, &t, RGB565_RED);
+    ips200_set_color(RGB565_RED, RGB565_BLACK);
+}
+
+/* 擦除手动/坐标 (闪烁灭相位用, 白底填白) */
+static void menu_erase_rec_mode_toggle(void)
+{
+    menu_fill_rect(MENU_REC_MODE_TOGGLE_X, MENU_ROW_Y0, MENU_REC_MODE_TOGGLE_X + 2*MENU_CHN_W - 1,
+                   MENU_ROW_Y0 + MENU_ROW_H - 1, RGB565_WHITE);
+}
+
+/* 设置航点记录模式页: 请选择记录模式：手动/坐标 (整行白底*, 手动/坐标 由调用方闪烁) */
+static void menu_draw_rec_mode_line(void)
+{
+    menu_draw_line(0, MT(TXT_QING_XUANZE_JILU_MOSHI), 1);   // 请选择记录模式 (白底*)
+    menu_draw_rec_mode_toggle();                             // 手动/坐标
+}
+
+/* 运行时拼装 "请输入第n个航点坐标", n 由 wp_cur 决定 (0→一, 与 menu_wp_line 数字一致) */
+static menu_text_t menu_coord_line(void)
+{
+    static menu_text_t         t;
+    static menu_chn_idx_enum   buf[12];
+    static const menu_chn_idx_enum PRE[]  = { MENU_CHN_QING2, MENU_CHN_SHU3, MENU_CHN_RU, MENU_CHN_DI };  // 请输入第
+    static const menu_chn_idx_enum NUM[]  = { MENU_CHN_YI, MENU_CHN_ER, MENU_CHN_SAN, MENU_CHN_SI, MENU_CHN_WU,
+                                              MENU_CHN_LIU, MENU_CHN_QI, MENU_CHN_BA, MENU_CHN_JIU };     // 一~九
+    static const menu_chn_idx_enum TAIL[] = { MENU_CHN_GE, MENU_CHN_HANG, MENU_CHN_DIAN, MENU_CHN_ZUO, MENU_CHN_BIAO };  // 个航点坐标
+    uint8_t n = 0, i;
+
+    for (i = 0; i < 4; i++) buf[n++] = PRE[i];              // 请输入第
+    buf[n++] = (wp_cur < 9) ? NUM[wp_cur] : NUM[8];         // n (0→一, 超9用九兜底)
+    for (i = 0; i < 5; i++) buf[n++] = TAIL[i];             // 个航点坐标
+    t.chars = buf;
+    t.num   = n;
+    return t;
+}
+
+/* 只重绘坐标行中的数值区 (按键调整 / 闪烁用, 不重绘整行); 0.01m 单位两位小数 (同发车区偏移) */
+static void menu_draw_coord_val_only(uint8_t line_idx, uint8_t is_x, uint8_t selected, uint8_t visible)
+{
+    uint16 y = MENU_ROW_Y0 + line_idx*MENU_ROW_H;
+    uint16 bg = selected ? RGB565_WHITE : RGB565_BLACK;
+    if (visible)
+    {
+        ips200_set_color(RGB565_RED, bg);
+        menu_show_offset_val_cm(is_x ? coord_x : coord_y, MENU_COORD_VAL_X, y + 2);
+        if (selected) ips200_set_color(RGB565_RED, RGB565_BLACK);
+    }
+    else
+    {
+        menu_fill_rect(MENU_COORD_VAL_X, y, MENU_COORD_VAL_X + 5*8 - 1, y + MENU_ROW_H - 1, bg);  // 底色盖掉 = 灭相位
+    }
+}
+
+/* 坐标输入整行: x/y 坐标为 : ±.XX米 (0.01m 单位两位小数); selected=1 白框*, 0 黑底红字 */
+static void menu_draw_coord_line(uint8_t line_idx, uint8_t is_x, uint8_t selected, uint8_t val_visible)
+{
+    uint16 y = MENU_ROW_Y0 + line_idx*MENU_ROW_H;
+    uint16 bg = selected ? RGB565_WHITE : RGB565_BLACK;
+    menu_text_t t_wz = MT(TXT_WEI_ZUO_BIAO);   // 坐标为
+    menu_text_t t_mi = MT(TXT_MI);             // 米
+
+    menu_fill_rect(0, y, MENU_SCREEN_W - 1, y + MENU_ROW_H - 1, bg);
+    ips200_set_color(RGB565_RED, bg);
+    ips200_show_char(MENU_TEXT_X,                       y + 2, is_x ? 'x' : 'y');   // x/y
+    menu_show_text(MENU_TEXT_X + 8,                     y + 2, &t_wz, RGB565_RED);  // 坐标为
+    ips200_show_char(MENU_TEXT_X + 8 + 3*MENU_CHN_W,    y + 2, ':');                // :
+    if (val_visible) menu_show_offset_val_cm(is_x ? coord_x : coord_y, MENU_COORD_VAL_X, y + 2);   // 数值
+    else             menu_fill_rect(MENU_COORD_VAL_X, y, MENU_COORD_VAL_X + 5*8 - 1, y + MENU_ROW_H - 1, bg);
+    menu_show_text(MENU_COORD_VAL_X + 5*8, y + 2, &t_mi, RGB565_RED);               // 米
+    if (selected) ips200_show_char(MENU_STR_X, y + 2, '*');
+    if (selected) ips200_set_color(RGB565_RED, RGB565_BLACK);                       // 恢复黑背景
+}
+
 /* 整页重绘 (页面切换时调用): 标题行 + 全部内容行 */
 static void menu_draw_screen(MenuState st)
 {
@@ -490,7 +676,7 @@ static void menu_draw_screen(MenuState st)
 
     case STATE_Internal_Nav_Record:
         menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
-        for (i = 0; i < 5; i++) menu_draw_line(i, INR_ROWS[i], (i == (uint8_t)menu_index));
+        for (i = 0; i < 6; i++) menu_draw_line(i, INR_ROWS[i], (i == (uint8_t)menu_index));
         break;
 
     case STATE_INR_CLEAR_DONE:
@@ -525,6 +711,31 @@ static void menu_draw_screen(MenuState st)
         menu_draw_line(0, MT(TXT_SUOYOU_WANBI), 1);       // 所有航点记录完毕
         break;
 
+    case STATE_INR_REC_MODE:
+        menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
+        menu_draw_rec_mode_line();                        // 请选择记录模式：手动/坐标 (整行白底*)
+        break;
+
+    case STATE_INR_COORD_X:
+        menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
+        menu_draw_line(0, menu_coord_line(), 0);          // 请输入第n个航点坐标 (黑底红字)
+        menu_draw_coord_line(1, 1, 1, 1);                 // x坐标为:±..米 (白框*, x 可见)
+        menu_draw_coord_line(2, 0, 0, 1);                 // y坐标为:±..米 (黑底)
+        break;
+
+    case STATE_INR_COORD_Y:
+        menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
+        menu_draw_line(0, menu_coord_line(), 0);          // 请输入第n个航点坐标 (黑底红字)
+        menu_draw_coord_line(1, 1, 0, 1);                 // x坐标为:±..米 (已定, 黑底)
+        menu_draw_coord_line(2, 0, 1, 1);                 // y坐标为:±..米 (白框*, y 可见)
+        break;
+
+    case STATE_INR_COORD_STEP:
+        menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
+        menu_draw_line(0, MT(TXT_QING_SHEZHI_BUCHANG), 0);   // 请设置步长 (黑底红字)
+        menu_draw_step_line(1, &coord_step, 1, 1);           // 步长:0.XX米 (白框*, 可见)
+        break;
+
     case STATE_INR_LAUNCH_ENABLE:
         menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
         menu_draw_launch_enable_line();                   // 是否启用发车区航点：是/否 (整行白底*)
@@ -535,18 +746,24 @@ static void menu_draw_screen(MenuState st)
         menu_draw_line(0, MT(TXT_YI_JINYONG_FACHEQU), 1); // 已禁用发车区航点
         break;
 
+    case STATE_INR_LAUNCH_STEP:
+        menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
+        menu_draw_line(0, MT(TXT_QING_SHEZHI_BUCHANG), 0);   // 请设置步长 (黑底红字)
+        menu_draw_step_line(1, &launch_step, 1, 1);          // 步长:0.XX米 (白框*, 可见)
+        break;
+
     case STATE_INR_LAUNCH_OFFSET_X:
         menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
         menu_draw_line(0, MT(TXT_QING_SHU_RU_PIANYI_ZUOBIAO), 0);   // 请输入偏移坐标 (黑底红字)
-        menu_draw_offset_line(1, 1, 1, 1);                // 偏移x坐标:±..米 (白框*, x 可见)
-        menu_draw_offset_line(2, 0, 0, 1);                // 偏移y坐标:±..米 (黑底)
+        menu_draw_offset_line(1, 1, 1, 1);                // 偏移x坐标:±.XX米 (白框*, x 可见)
+        menu_draw_offset_line(2, 0, 0, 1);                // 偏移y坐标:±.XX米 (黑底)
         break;
 
     case STATE_INR_LAUNCH_OFFSET_Y:
         menu_draw_title(TXT_GUANDAO_SHEZHI, 4);
         menu_draw_line(0, MT(TXT_QING_SHU_RU_PIANYI_ZUOBIAO), 0);   // 请输入偏移坐标 (黑底红字)
-        menu_draw_offset_line(1, 1, 0, 1);                // 偏移x坐标:±..米 (已定, 黑底)
-        menu_draw_offset_line(2, 0, 1, 1);                // 偏移y坐标:±..米 (白框*, y 可见)
+        menu_draw_offset_line(1, 1, 0, 1);                // 偏移x坐标:±.XX米 (已定, 黑底)
+        menu_draw_offset_line(2, 0, 1, 1);                // 偏移y坐标:±.XX米 (白框*, y 可见)
         break;
 
     case STATE_INR_LAUNCH_DONE:
@@ -626,7 +843,7 @@ void App_Menu_Init(void)
 {
     ips200_init(IPS200_TYPE_SPI);
     ips200_set_font(IPS200_8X16_FONT);          // ASCII (* 号等) 用 8x16, 与 16px 汉字等高
-    printf("MENU v2.5.0\r\n");                  // 版本标记: 串口确认烧录的是最新固件
+    printf("MENU v2.7.0\r\n");                  // 版本标记: 串口确认烧录的是最新固件
     ips200_set_color(RGB565_RED, RGB565_BLACK);
     ips200_full(RGB565_BLACK);                  // 显式填黑, 不依赖全局背景色
     menu_draw_screen(menu_state);               // 开机绘制一次主界面
@@ -684,7 +901,7 @@ void App_Menu_Task(void)
         {
             old = (uint8_t)menu_index;
             menu_index++;
-            menu_index %= 5;
+            menu_index %= 6;
             key_clear_state(KEY_1);
             menu_draw_line(old, INR_ROWS[old], 0);                        // 旧行: 取消选中
             menu_draw_line((uint8_t)menu_index, INR_ROWS[menu_index], 1); // 新行: 选中
@@ -693,16 +910,36 @@ void App_Menu_Task(void)
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_2);
-            if      (menu_index == 0) { wp_cur = 0; rec_cancel_done = 0; Inav_ResetMap(); menu_state = STATE_INR_WP_START; }  // 记录航点 → 记录流程 (首次KEY4取消闭环, 之后才是正式记录; 重进先清内存航点防残留)
-            else if (menu_index == 1) { set_num = 1; set_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_SET_WP_COUNT; }  // 设置航点数量 → 调整页 (num初始可见)
-            else if (menu_index == 2) { launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_LAUNCH_ENABLE; }          // 发车区航点设置 → 启用页 (是/否初始可见)
-            else if (menu_index == 3) { spd_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_SPD_LIMIT_X; }              // 设置惯导速度限幅 → 限幅x (值初始可见)
+            if (menu_index == 0) {                                                                                       // 记录航点 → 按记录模式分流程
+                if (wp_set == 0) {
+                    /* v1.4.9: 0航点 = 不记录惯导, 发车区偏移点为唯一惯导点 → 直接构建导航航点 + 提示"所有航点记录完毕" */
+                    Inav_ResetMap();
+                    Inav_BuildMap();
+                    menu_state = STATE_INR_WP_DONE;
+                    auto_back_tick = menu_tick_10ms;
+                } else if (rec_mode == 1) {
+                    /* 坐标模式: 不取消闭环(保持), 先设步长 → 再进坐标输入; 每航点两次KEY_2确认(先x后y) */
+                    wp_cur = 0; coord_x = 0; coord_y = 0; Inav_ResetMap();
+                    coord_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+                    menu_state = STATE_INR_COORD_STEP;
+                } else {
+                    /* 手动模式: 与 v2.3.0 完全一致 (首次KEY4取消闭环, 之后KEY4开始/结束记录; 重进先清内存航点防残留) */
+                    wp_cur = 0; rec_cancel_done = 0; Inav_ResetMap(); menu_state = STATE_INR_WP_START;
+                }
+            }
+            else if (menu_index == 1) { rec_mode_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_REC_MODE; }          // 设置航点记录模式 → 切换页 (手动/坐标初始可见)
+            else if (menu_index == 2) { set_num = 1; set_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_SET_WP_COUNT; }  // 设置航点数量 → 调整页 (num初始可见)
+            else if (menu_index == 3) { launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_LAUNCH_ENABLE; }          // 发车区航点设置 → 启用页 (是/否初始可见)
+            else if (menu_index == 4) { spd_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_SPD_LIMIT_X; }              // 设置惯导速度限幅 → 限幅x (值初始可见)
             else {
-                FlashStore_ClearAll();       // 清 W25Q64: 航点地图 + 设置(航点数量/发车区启用标志/偏移/惯导+位置环速度限幅)
+                FlashStore_ClearAll();       // 清 W25Q64: 航点地图 + 设置(航点数量/发车区启用标志/偏移/步长/惯导+位置环速度限幅/记录模式)
                 Inav_ResetMap();             // 清内存航点
                 wp_set = 1; launch_enable = 0; launch_off_x = 0; launch_off_y = 0;  // 恢复默认 (发车区标志清零)
+                launch_step = 4;                    // 恢复默认步长 0.20m
+                coord_step  = 4;                    // 恢复默认步长 0.20m
                 spd_limit_x = 6; spd_limit_y = 6;   // 恢复默认限幅 0.30m/s (与 POS_MAX 一致)
                 pos_limit_x = 6; pos_limit_y = 6;   // 恢复默认限幅 0.30m/s (与 POS_V_MAX 一致)
+                rec_mode = 0;                       // 恢复默认记录模式: 手动推车
                 Inav_UpdateMax();            // 重算 bcn_max/wp_max (=1, 无发车区)
                 printf("FLASH: all data cleared\n");
                 menu_state = STATE_INR_CLEAR_DONE;      // 数据已清除 → 提示1s
@@ -711,7 +948,8 @@ void App_Menu_Task(void)
         }
         break;
 
-    /* 设置航点数量: KEY_1 ++ (封顶9), KEY_4 -- (保底1), KEY_2 确认; num 未确认期间闪烁 */
+    /* 设置航点数量: KEY_1 ++ (封顶9), KEY_4 -- (保底0), KEY_2 确认; num 未确认期间闪烁
+     * v1.4.9: 允许0航点 = 不记录惯导, 仅用发车区偏移点当唯一惯导点 (PlanB, 赛场可能不允许推车打点) */
     case STATE_INR_SET_WP_COUNT:
         k = key_get_state(KEY_1);
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
@@ -724,7 +962,7 @@ void App_Menu_Task(void)
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_4);
-            if (set_num > 1) set_num--;              // 保底1, 到底不再递减
+            if (set_num > 0) set_num--;              // 保底0, 到底不再递减
             menu_draw_set_num();
         }
         k = key_get_state(KEY_2);
@@ -771,13 +1009,157 @@ void App_Menu_Task(void)
         {
             key_clear_state(KEY_4);
             Inav_RecEnd();               // 结束记录当前航点 (存 bcn_abs[bcn_idx++])
-            if (wp_cur < wp_set - 1) { wp_cur++; menu_state = STATE_INR_WP_START; }   // 还有下一个航点
+            if (wp_cur + 1 < wp_set) { wp_cur++; menu_state = STATE_INR_WP_START; }   // 还有下一个航点 (v1.4.9: 原 wp_cur<wp_set-1 在 wp_set=0 时下溢成255死循环, 改加法比较)
             else {
                 Inav_BuildMap();                                   // 全部录完: 构建导航航点 (含发车区航点)
                 FlashStore_SaveWaypoints(Inav_GetMap(), wp_set);   // 写 W25Q64 Region1 (航点地图)
                 printf("FLASH: waypoints saved (%d)\n", wp_set);
                 menu_state = STATE_INR_WP_DONE;                    // 所有航点记录完毕
                 auto_back_tick = menu_tick_10ms;                   // 1s后回二级
+            }
+        }
+        break;
+
+    /* 设置航点记录模式: 请选择记录模式：手动/坐标 (KEY_1 切换, 未确认闪烁, KEY_2 确认) */
+    case STATE_INR_REC_MODE:
+        k = key_get_state(KEY_1);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_1);
+            rec_mode ^= 1;                                            // 手动↔坐标 切换
+            menu_draw_rec_mode_toggle();
+            rec_mode_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);  // 切换后从可见相位继续闪烁
+        }
+        k = key_get_state(KEY_2);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_2);
+            menu_save_settings();        // 写 W25Q64 Region2 (记录模式)
+            menu_state = STATE_Internal_Nav_Record;                     // 确认后直接回二级
+        }
+        {
+            uint8_t blink = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            if (blink != rec_mode_blink_last)
+            {
+                rec_mode_blink_last = blink;
+                if (blink) menu_draw_rec_mode_toggle();
+                else       menu_erase_rec_mode_toggle();
+            }
+        }
+        break;
+
+    /* 请输入第n个航点坐标: 设置 x (KEY_1 +步长 封顶+8.00, KEY_4 -步长 保底-8.00, KEY_2 确认, x 闪烁) */
+    case STATE_INR_COORD_X:
+        k = key_get_state(KEY_1);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_1);
+            if (coord_x < 800) coord_x += (int16)coord_step * 5;   // 每次 +步长 (0.05m×5=0.01m单位), 封顶 +8.00
+            menu_draw_coord_val_only(1, 1, 1, 1);
+            coord_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_4);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_4);
+            if (coord_x > -800) coord_x -= (int16)coord_step * 5;  // 每次 -步长, 保底 -8.00
+            menu_draw_coord_val_only(1, 1, 1, 1);
+            coord_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_2);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_2);
+            coord_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            menu_state = STATE_INR_COORD_Y;                     // x 定住, 进入设置 y
+        }
+        {
+            uint8_t blink = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            if (blink != coord_blink_last)
+            {
+                coord_blink_last = blink;
+                if (blink) menu_draw_coord_val_only(1, 1, 1, 1);
+                else       menu_draw_coord_val_only(1, 1, 1, 0);
+            }
+        }
+        break;
+
+    /* 请输入第n个航点坐标: 设置 y (x 已定住不再闪烁, y 闪烁; KEY_2 确认 → 直写第n个航点) */
+    case STATE_INR_COORD_Y:
+        k = key_get_state(KEY_1);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_1);
+            if (coord_y < 800) coord_y += (int16)coord_step * 5;   // 每次 +步长, 封顶 +8.00
+            menu_draw_coord_val_only(2, 0, 1, 1);
+            coord_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_4);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_4);
+            if (coord_y > -800) coord_y -= (int16)coord_step * 5;  // 每次 -步长, 保底 -8.00
+            menu_draw_coord_val_only(2, 0, 1, 1);
+            coord_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_2);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_2);
+            Inav_SetWaypoint(wp_cur, coord_x, coord_y);         // 直写 bcn_abs[wp_cur] (y左正右负存储翻转)
+            if (wp_cur + 1 < wp_set) { wp_cur++; menu_state = STATE_INR_COORD_X; }   // 还有下一个航点 → 继续输入 (坐标沿用上一航点, 便于连续相近点)
+            else {
+                Inav_BuildMap();                                   // 全部录完: 构建导航航点 (含发车区航点)
+                FlashStore_SaveWaypoints(Inav_GetMap(), wp_set);   // 写 W25Q64 Region1 (航点地图)
+                printf("FLASH: waypoints saved (%d)\n", wp_set);
+                menu_state = STATE_INR_WP_DONE;                    // 所有航点记录完毕
+                auto_back_tick = menu_tick_10ms;                   // 1s后回二级
+            }
+        }
+        {
+            uint8_t blink = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            if (blink != coord_blink_last)
+            {
+                coord_blink_last = blink;
+                if (blink) menu_draw_coord_val_only(2, 0, 1, 1);
+                else       menu_draw_coord_val_only(2, 0, 1, 0);
+            }
+        }
+        break;
+
+    /* 请设置步长 (坐标模式): 步长:0.XX米 (KEY_1 +0.05 封顶0.50, KEY_4 -0.05 保底0.05, 无符号位, KEY_2 确认 → 进坐标x, 闪烁) */
+    case STATE_INR_COORD_STEP:
+        k = key_get_state(KEY_1);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_1);
+            if (coord_step < 10) coord_step++;                          // 每次 +0.05m, 封顶 0.50
+            menu_draw_step_val_only(1, &coord_step, 1, 1);
+            coord_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_4);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_4);
+            if (coord_step > 1) coord_step--;                           // 每次 -0.05m, 保底 0.05
+            menu_draw_step_val_only(1, &coord_step, 1, 1);
+            coord_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_2);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_2);
+            menu_save_settings();          // 写 W25Q64 Region2 (步长; 航点录完写地图区)
+            coord_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            menu_state = STATE_INR_COORD_X;                             // 步长确认 → 输入坐标x
+        }
+        {
+            uint8_t blink = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            if (blink != coord_blink_last)
+            {
+                coord_blink_last = blink;
+                if (blink) menu_draw_step_val_only(1, &coord_step, 1, 1);
+                else       menu_draw_step_val_only(1, &coord_step, 1, 0);
             }
         }
         break;
@@ -798,7 +1180,7 @@ void App_Menu_Task(void)
             key_clear_state(KEY_2);
             Inav_UpdateMax();            // launch_enable 变化 → 重算 wp_max
             menu_save_settings();        // 写 W25Q64 Region2 (发车区启用标志, 影响总航点计算)
-            if (launch_enable) { launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_LAUNCH_OFFSET_X; }   // 启用 → 输入偏移
+            if (launch_enable) { launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1); menu_state = STATE_INR_LAUNCH_STEP; }   // 启用 → 先设步长
             else { menu_state = STATE_INR_LAUNCH_DISABLED; auto_back_tick = menu_tick_10ms; }                // 禁用 → 提示1s
         }
         {
@@ -812,13 +1194,50 @@ void App_Menu_Task(void)
         }
         break;
 
-    /* 请输入偏移坐标: 设置偏移x (KEY_1 +0.2m 封顶+2, KEY_4 -0.2m 保底-2, KEY_2 确认, x 闪烁) */
+    /* 请设置步长: 步长:0.XX米 (KEY_1 +0.05m 封顶0.50, KEY_4 -0.05m 保底0.05, 无符号位, KEY_2 确认 → 进偏移x, 闪烁) */
+    case STATE_INR_LAUNCH_STEP:
+        k = key_get_state(KEY_1);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_1);
+            if (launch_step < 10) launch_step++;                          // 每次 +0.05m, 封顶 0.50
+            menu_draw_step_val_only(1, &launch_step, 1, 1);
+            launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_4);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_4);
+            if (launch_step > 1) launch_step--;                           // 每次 -0.05m, 保底 0.05
+            menu_draw_step_val_only(1, &launch_step, 1, 1);
+            launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+        }
+        k = key_get_state(KEY_2);
+        if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
+        {
+            key_clear_state(KEY_2);
+            menu_save_settings();          // 写 W25Q64 Region2 (步长; 偏移仍在下面设置)
+            launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            menu_state = STATE_INR_LAUNCH_OFFSET_X;                       // 步长确认 → 输入偏移x
+        }
+        {
+            uint8_t blink = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
+            if (blink != launch_blink_last)
+            {
+                launch_blink_last = blink;
+                if (blink) menu_draw_step_val_only(1, &launch_step, 1, 1);
+                else       menu_draw_step_val_only(1, &launch_step, 1, 0);
+            }
+        }
+        break;
+
+    /* 请输入偏移坐标: 设置偏移x (KEY_1 +步长 封顶+2.00, KEY_4 -步长 保底-2.00, KEY_2 确认, x 闪烁) */
     case STATE_INR_LAUNCH_OFFSET_X:
         k = key_get_state(KEY_1);
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_1);
-            if (launch_off_x < 20) launch_off_x += 2;                     // 每次 +0.2m, 封顶 +2.0
+            if (launch_off_x < 200) launch_off_x += (int16)launch_step * 5;    // 每次 +步长 (0.05m×5=0.01m单位), 封顶 +2.00
             menu_draw_offset_val_only(1, 1, 1, 1);
             launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
         }
@@ -826,7 +1245,7 @@ void App_Menu_Task(void)
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_4);
-            if (launch_off_x > -20) launch_off_x -= 2;                    // 每次 -0.2m, 保底 -2.0
+            if (launch_off_x > -200) launch_off_x -= (int16)launch_step * 5;   // 每次 -步长, 保底 -2.00
             menu_draw_offset_val_only(1, 1, 1, 1);
             launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
         }
@@ -848,13 +1267,13 @@ void App_Menu_Task(void)
         }
         break;
 
-    /* 请输入偏移坐标: 设置偏移y (x 已定住不再闪烁, y 闪烁; 键位同 x) */
+    /* 请输入偏移坐标: 设置偏移y (x 已定住不再闪烁, y 闪烁; 键位同 x, 步长同 x) */
     case STATE_INR_LAUNCH_OFFSET_Y:
         k = key_get_state(KEY_1);
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_1);
-            if (launch_off_y < 20) launch_off_y += 2;
+            if (launch_off_y < 200) launch_off_y += (int16)launch_step * 5;    // 每次 +步长, 封顶 +2.00
             menu_draw_offset_val_only(2, 0, 1, 1);
             launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
         }
@@ -862,7 +1281,7 @@ void App_Menu_Task(void)
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_4);
-            if (launch_off_y > -20) launch_off_y -= 2;
+            if (launch_off_y > -200) launch_off_y -= (int16)launch_step * 5;   // 每次 -步长, 保底 -2.00
             menu_draw_offset_val_only(2, 0, 1, 1);
             launch_blink_last = ((menu_tick_10ms / MENU_SET_BLINK_TICKS) & 1);
         }

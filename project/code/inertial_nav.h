@@ -34,6 +34,7 @@ void InertialNav_PosUpdate(void);    // ISR每10ms调用: 更新g_pos_x/y
 void Inav_DisableControl(void);      // 取消闭环: PID全关+PWM清零 (记录前让车可自由推动)
 void Inav_RecStart(void);            // 开始记录当前航点
 void Inav_RecEnd(void);              // 结束记录当前航点 (存 bcn_abs[bcn_idx++])
+void Inav_SetWaypoint(uint8_t idx, int16 x_cent, int16 y_cent);  // 坐标模式: 直写第 idx 个航点绝对坐标 (单位0.01m, y 左正右负翻转)
 void Inav_BuildMap(void);            // 全部录完: 构建导航航点 (含发车区) + 预计算段参数
 void Inav_LoadMap(void);             // 上电: 从 W25Q64 读地图 → 设上限 + 构建
 void Inav_UpdateMax(void);           // 菜单设置变化后重算 bcn_max/wp_max

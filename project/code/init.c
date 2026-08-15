@@ -35,23 +35,27 @@ void Init_all(void)
         printf("W25Q64: init %s, ID=0x%06lX\n",
                (w25_err ? "FAIL" : "OK"), (unsigned long)w25q64_chip_id);
 
-        // 掉电存储加载: Region2 设置 (航点数量/发车区启用/偏移/速度限幅) → 覆盖菜单全局
+        // 掉电存储加载: Region2 设置 (航点数量/发车区启用/偏移/步长/速度限幅/记录模式) → 覆盖菜单全局
+        // v2.7.0: magic 0x5A→0x5B, 老扇区 magic 不匹配 → 走 else 用默认值 (偏移单位 0.1m→0.01m 后老偏移作废)
         flash_settings_t st;
         if (FlashStore_LoadSettings(&st)) {
             wp_set        = st.wp_set;
             launch_enable = st.launch_enable;
             launch_off_x  = st.launch_off_x;
             launch_off_y  = st.launch_off_y;
+            launch_step   = (st.launch_step >= 1 && st.launch_step <= 10) ? st.launch_step : 4;   // 步长钳位 1~10, 越界默认4=0.20m
+            coord_step    = (st.coord_step  >= 1 && st.coord_step  <= 10) ? st.coord_step  : 4;   // 坐标模式步长钳位 (v2.8.0)
             // 速度限幅: v2.3.0 及以前结构体只有 8 字节, 新字段读到旧扇区残留(0xFF) → 超上限钳位默认
             spd_limit_x   = (st.spd_limit_x <= 10) ? st.spd_limit_x : 6;
             spd_limit_y   = (st.spd_limit_y <= 10) ? st.spd_limit_y : 6;
             pos_limit_x   = (st.pos_limit_x <= 10) ? st.pos_limit_x : 6;
             pos_limit_y   = (st.pos_limit_y <= 10) ? st.pos_limit_y : 6;
-            printf("FLASH: settings loaded (wp=%d en=%d off=%d,%d spd=%d,%d pos=%d,%d)\n",
-                   wp_set, launch_enable, launch_off_x, launch_off_y, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y);
+            rec_mode      = (st.rec_mode <= 1) ? st.rec_mode : 0;   // 记录模式 (旧填充字节读到0xFF → 0=手动)
+            printf("FLASH: settings loaded (wp=%d en=%d off=%d,%d step=%d cstep=%d spd=%d,%d pos=%d,%d rec=%d)\n",
+                   wp_set, launch_enable, launch_off_x, launch_off_y, launch_step, coord_step, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y, rec_mode);
         } else {
-            printf("FLASH: no settings, use defaults (wp=%d en=%d spd=%d,%d pos=%d,%d)\n",
-                   wp_set, launch_enable, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y);
+            printf("FLASH: no settings, use defaults (wp=%d en=%d step=%d cstep=%d spd=%d,%d pos=%d,%d rec=%d)\n",
+                   wp_set, launch_enable, launch_step, coord_step, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y, rec_mode);
         }
         // Region1 航点地图 → 设 bcn_max/wp_max (按菜单设置) + 构建导航航点
         Inav_LoadMap();

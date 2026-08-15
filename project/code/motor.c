@@ -24,6 +24,7 @@
 
 /*==================================================== 全局变量 ====================================================*/
 #define POS_V_MAX 0.50f   // 位置环 PID 输出限幅天花板 (v2.5.0 起运行时被 pos_limit_x/y 覆盖, 此值仅 Init 用一次)
+#define SPD_CLAMP_MAX 200.0f   // 速度环目标转速硬钳 (pulse/10ms): 0.5m/s=200 脉冲/10ms (v1.4.7 由 ±180 放开到 ±200, 让菜单 0.5m/s 真正跑满; 原 ±180≈0.45m/s 物理极限)
 // 四个电机结构体实例
 motor_t motor_L1;       // 左前轮
 motor_t motor_L2;       // 左后轮
@@ -645,10 +646,10 @@ void Motor_PID_Control_All(void)
 
     // ---- 左前轮 ----
     if (motor_L1.pid.Enable) {
-        // 转速限幅: 钳位目标速度到 ±100 pulse/10ms
+        // 转速限幅: 钳位目标速度到 ±SPD_CLAMP_MAX pulse/10ms (=200, 对应0.5m/s)
         target = (float)motor_L1.target_speed;
-        if (target >  180.0f) target =  180.0f;
-        if (target < -180.0f) target = -180.0f;
+        if (target >  SPD_CLAMP_MAX) target =  SPD_CLAMP_MAX;
+        if (target < -SPD_CLAMP_MAX) target = -SPD_CLAMP_MAX;
         PID_SetTarget(&motor_L1.pid, target);
 
         feedback    = PID_Calculate(&motor_L1.pid, (float)motor_L1.encoder_speed);
@@ -667,8 +668,8 @@ void Motor_PID_Control_All(void)
     // ---- 左后轮 (电机线反接: 正duty=倒退, 故输出取反) ----
     if (motor_L2.pid.Enable) {
         target = (float)motor_L2.target_speed;
-        if (target >  180.0f) target =  180.0f;
-        if (target < -180.0f) target = -180.0f;
+        if (target >  SPD_CLAMP_MAX) target =  SPD_CLAMP_MAX;
+        if (target < -SPD_CLAMP_MAX) target = -SPD_CLAMP_MAX;
         PID_SetTarget(&motor_L2.pid, target);
 
         feedback    = PID_Calculate(&motor_L2.pid, (float)motor_L2.encoder_speed);
@@ -684,8 +685,8 @@ void Motor_PID_Control_All(void)
     // ---- 右前轮 ----
     if (motor_R1.pid.Enable) {
         target = (float)motor_R1.target_speed;
-        if (target >  180.0f) target =  180.0f;
-        if (target < -180.0f) target = -180.0f;
+        if (target >  SPD_CLAMP_MAX) target =  SPD_CLAMP_MAX;
+        if (target < -SPD_CLAMP_MAX) target = -SPD_CLAMP_MAX;
         PID_SetTarget(&motor_R1.pid, target);
 
         feedback    = PID_Calculate(&motor_R1.pid, (float)motor_R1.encoder_speed);
@@ -703,8 +704,8 @@ void Motor_PID_Control_All(void)
     // ---- 右后轮 (电机线反接: 正duty=倒退, 故输出取反) ----
     if (motor_R2.pid.Enable) {
         target = (float)motor_R2.target_speed;
-        if (target >  180.0f) target =  180.0f;
-        if (target < -180.0f) target = -180.0f;
+        if (target >  SPD_CLAMP_MAX) target =  SPD_CLAMP_MAX;
+        if (target < -SPD_CLAMP_MAX) target = -SPD_CLAMP_MAX;
         PID_SetTarget(&motor_R2.pid, target);
 
         feedback    = PID_Calculate(&motor_R2.pid, (float)motor_R2.encoder_speed);
