@@ -1452,13 +1452,13 @@ void App_Menu_Task(void)
         break;
 
     /* 无人机控制: 起桨 → 起飞 → 发车 → 比赛 (KEY_2/KEY_4 推进)
-     * 注: 目前接着遥控模拟, 发送指令为 // 占位注释, 恢复无人机通信后取消注释即可 */
+     * 2026-08-16: 恢复发送指令 (通信链路已修, CONTROL_SRC_DRONE=1 走 HC06 UART1) */
     case STATE_UAV_Control:
         k = key_get_state(KEY_2);
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_2);
-            //HC06_SendDroneCmd(1);   // 起桨指令 (原逻辑KEY_1发送cmd 1 / 'A', 现菜单KEY_2触发)
+            HC06_SendDroneCmd(1);   // 起桨指令 → 'A' (cmd=1→'A'), 无人机起桨
             menu_state = STATE_UAV_TAKEOFF;    // 确认起桨 → 请起飞
         }
         break;
@@ -1468,7 +1468,7 @@ void App_Menu_Task(void)
         if (k == KEY_SHORT_PRESS || k == KEY_LONG_PRESS)
         {
             key_clear_state(KEY_2);
-            //HC06_SendDroneCmd(2);   // 起飞/启动闭环指令 (原逻辑发送cmd 2 / 'B')
+            HC06_SendDroneCmd(2);   // 起飞/启动闭环指令 → 'B' (cmd=2→'B'), 无人机进入闭环
             menu_state = STATE_UAV_DEPART;     // 确认起飞 → 请发车
         }
         break;
@@ -1479,7 +1479,7 @@ void App_Menu_Task(void)
         {
             key_clear_state(KEY_4);
             if (Inav_Launch()) {
-                //HC06_SendDroneCmd(4);   // 通知无人机已发车 (原逻辑发车时发送cmd 4 / 'D')
+                HC06_SendDroneCmd(4);   // 通知无人机已发车 → 'D' (cmd=4→'D'), 此后小车持续发速度前馈
                 menu_state = STATE_UAV_RACE;       // 武装成功 → 已发车/开始比赛
             }
             // 武装失败 (航点未录齐): 停留在本页, 串口已打印原因, 菜单无提示

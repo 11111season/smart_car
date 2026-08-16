@@ -13,7 +13,7 @@
  * @parameters : 无
  * @retvalue   : 无
  * @note       : 无
-******************************************************************************/
+ ******************************************************************************/
 void Init_all(void)
 {
     //电机初始化
@@ -26,14 +26,17 @@ void Init_all(void)
     //My_MPU6050_Init();
     imu660ra_init();
     //菜单初始化 (2026-08-09 下地实测: 恢复屏幕和菜单控制)
+    //2026-08-15 链路验证: 暂时注释屏幕, 单纯测通信通路 (发车逻辑不动)
+    //2026-08-16: 通信问题已定位 (UART优先级), 恢复屏幕菜单
     App_Menu_Init();
     //磁力计初始化 (2026-08-07: 暂时注释, 导航用陀螺仪+零漂学习)
     qmc5883l_init();
     //W25Q64 掉电存储初始化 (软件SPI, P06_2/3/4/5)
     {
         uint8 w25_err = w25q64_init();
-        printf("W25Q64: init %s, ID=0x%06lX\n",
-               (w25_err ? "FAIL" : "OK"), (unsigned long)w25q64_chip_id);
+        // 2026-08-16: 不接烧录器验证期间, 注释一次性初始化打印 (UART0)
+        //printf("W25Q64: init %s, ID=0x%06lX\n",
+        //       (w25_err ? "FAIL" : "OK"), (unsigned long)w25q64_chip_id);
 
         // 掉电存储加载: Region2 设置 (航点数量/发车区启用/偏移/步长/速度限幅/记录模式) → 覆盖菜单全局
         // v2.7.0: magic 0x5A→0x5B, 老扇区 magic 不匹配 → 走 else 用默认值 (偏移单位 0.1m→0.01m 后老偏移作废)
@@ -51,21 +54,25 @@ void Init_all(void)
             pos_limit_x   = (st.pos_limit_x <= 10) ? st.pos_limit_x : 6;
             pos_limit_y   = (st.pos_limit_y <= 10) ? st.pos_limit_y : 6;
             rec_mode      = (st.rec_mode <= 1) ? st.rec_mode : 0;   // 记录模式 (旧填充字节读到0xFF → 0=手动)
-            printf("FLASH: settings loaded (wp=%d en=%d off=%d,%d step=%d cstep=%d spd=%d,%d pos=%d,%d rec=%d)\n",
-                   wp_set, launch_enable, launch_off_x, launch_off_y, launch_step, coord_step, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y, rec_mode);
+            //printf("FLASH: settings loaded (wp=%d en=%d off=%d,%d step=%d cstep=%d spd=%d,%d pos=%d,%d rec=%d)\n",
+            //       wp_set, launch_enable, launch_off_x, launch_off_y, launch_step, coord_step, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y, rec_mode);
         } else {
-            printf("FLASH: no settings, use defaults (wp=%d en=%d step=%d cstep=%d spd=%d,%d pos=%d,%d rec=%d)\n",
-                   wp_set, launch_enable, launch_step, coord_step, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y, rec_mode);
+            //printf("FLASH: no settings, use defaults (wp=%d en=%d step=%d cstep=%d spd=%d,%d pos=%d,%d rec=%d)\n",
+            //       wp_set, launch_enable, launch_step, coord_step, spd_limit_x, spd_limit_y, pos_limit_x, pos_limit_y, rec_mode);
         }
         // Region1 航点地图 → 设 bcn_max/wp_max (按菜单设置) + 构建导航航点
         Inav_LoadMap();
     }
     //定时器初始化
-    //蓝牙/485初始化 (LoRa模拟无人机期间注释)
-    //HC06_Init(1000000);
+    //控制输入: 真实无人机/视觉 = HC06 解析 #x,y,flag$ 帧 (原RS485/蓝牙路径); LoRa遥控模拟 = App_Lora
 #if !MAG_CALIB_MODE
+#if CONTROL_SRC_DRONE
+    //真实无人机/视觉: UART_1 透传接收 #x,y,flag$ 帧 (视觉发送与无人机一致, 接收逻辑不变; 波特率与无线模块 115200 对齐)
+    HC06_Init(115200);
+#else
     //LoRa遥控器模拟无人机初始化 (磁力计校准期间不初始化, 避免占用UART_1和打印)
     App_Lora_Init();
+#endif
 #endif
     pit_ms_init(PIT_CH0,10);//开启了10ms中断
     pit_ms_init(PIT_CH1,10);//开启了10ms中断

@@ -8,6 +8,7 @@
 
 #include "test.h"
 #include "inertial_nav.h"   // fused_yaw
+#include "HC06_Driver.h"    // 2026-08-15 链路测试: HC06_Init / HC06_Task
 
 //-------------------------------------------------------------------------------------------------------------------
 // 原有测试函数 (保留, 已注释调用)
@@ -701,5 +702,22 @@ void Test_QuickLaunch(void)
         } else {
             printf("TEST: launch denied (map not ready?)\n");
         }
+    }
+}
+
+//-------------------------------------------------------------------------------------------------------------------
+// 2026-08-15 通信链路最小测试: UART1 接收+回显 (只走 HC06 中断路径, 其他子系统全不初始化)
+// 前提:   其他逻辑全部注释, 主循环只调本函数 (内部死循环)
+// 接线:   USB-TTL → 小车 UART1: USB_TX→P04_0(小车RX), USB_RX→P04_1(小车TX), 共GND
+// 波特率: 115200 8N1
+// 行为:   电脑发 #x,y,flag$ 帧 → 小车中断收字节 → 整帧解析 → UART0打印 + UART1回显
+//         注意: 本库 uart_query_byte 读的是软件缓冲, 必须走接收中断 (uart_isr_mask 填充), 纯轮询不可用
+//-------------------------------------------------------------------------------------------------------------------
+void Uart1_EchoTest(void)
+{
+    HC06_Init(115200);      // FIFO + UART1 @115200 + RX中断 (引脚 P04_1/P04_0), ISR 由 uart1_isr 调 HC06_UART_RX_Handler
+    printf("ECHO-TEST: UART1 @115200 rx-irq ready, send #x,y,flag$ frames...\n");
+    while (1) {
+        HC06_Task();        // 解析 #...$ → ParseFrameData → UART0打印 DRONE-RX + UART1回显 RX: [...]
     }
 }

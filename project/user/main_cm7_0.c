@@ -34,12 +34,18 @@ int main(void)
         InertialNav_Update();
         //W25Q64_Test();               // 掉电存储通路测试 (写读回比对). 掉电持久化测试期间注释 — 它每轮会先擦扇区0, 会把要验证的数据冲掉!
         //W25Q64_Persist_Test();       // 2026-08-08: 存储模块已接管 (w25q64_storage 两个分区), 且0x000000现为航点地图区, 旧测试读它会误报
-        App_Menu_Task();               // 菜单显示任务 (2026-08-09 下地实测: 恢复)
+        App_Menu_Task();               // 2026-08-16: 通信问题已定位 (UART优先级), 恢复屏幕菜单显示+控制
         //Test_QuickLaunch();          // 零漂测量实验脚手架 (已废弃, 保留注释)
         //Drift_Measure_Test();        // 零漂测量实验脚手架 (已废弃, 保留注释)
-        //HC06_Task();                 // 485/蓝牙接收暂用 (LoRa模拟无人机期间注释)
 #if !MAG_CALIB_MODE
+#if CONTROL_SRC_DRONE
+        HC06_Task();                   // 真实无人机/视觉: 解析 #x,y,flag$ 帧 (原RS485/蓝牙路径)
+#else
         App_Lora_Task();               // LoRa遥控器模拟无人机 (校准期间关闭, 避免污染磁力计数据)
+#endif
+
+        // 2026-08-16: rx_irq 诊断完成 (根因=UART优先级), 打印已删除
+        // 验证方式: USB-TTL 接 UART1, ParseFrameData 会回显 RX: [...] 到 COM 口
 
         // 导航模式调试: 限频打印 陀螺积分航向 (50ms) — 2026-08-07 注释: 干扰遥控S4实测
         // 2026-08-07: 磁力计融合暂关, 用陀螺仪+零漂学习, 故只打陀螺yaw
@@ -57,16 +63,17 @@ int main(void)
         Mag_Yaw_Verify();              // 航向验证: 连续打印三路yaw
 #endif
 
-        // 发送侧暂缓 (LoRa占用UART_1, 避免与接收冲突)
-        // if (send_vel_flag) {
-        //     send_vel_flag = 0;
-        //     float s1=motor_L1.encoder_speed, s2=motor_L2.encoder_speed;
-        //     float s3=motor_R1.encoder_speed, s4=motor_R2.encoder_speed;
-        //     float vx_enc = ( s1+ s2+ s3+ s4)*0.25f;
-        //     float vy_enc = (-s1+ s2+ s3- s4)*0.25f;
-        //     float vx_act = EncoderPulses_To_LinearVelocity((int)vx_enc);
-        //     float vy_act = EncoderPulses_To_LinearVelocity((int)vy_enc);
-        //     HC06_SendVelocity(vx_act, vy_act);
-        // }
+        // 2026-08-16: 恢复发送侧 — 发车后(mission_armed) 10ms 一次给无人机发速度前馈 #vx,vy$
+        // (UART1 双向: 收 #x,y,flag$ 视觉误差 + 发 #vx,vy$ 前馈; RS485 半双工, 协议层注意避让)
+        if (send_vel_flag) {
+            send_vel_flag = 0;
+            float s1=motor_L1.encoder_speed, s2=motor_L2.encoder_speed;
+            float s3=motor_R1.encoder_speed, s4=motor_R2.encoder_speed;
+            float vx_enc = ( s1+ s2+ s3+ s4)*0.25f;
+            float vy_enc = (-s1+ s2+ s3- s4)*0.25f;
+            float vx_act = EncoderPulses_To_LinearVelocity((int)vx_enc);
+            float vy_act = EncoderPulses_To_LinearVelocity((int)vy_enc);
+            HC06_SendVelocity(vx_act, vy_act);
+        }
     }
 }

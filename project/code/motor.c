@@ -196,7 +196,10 @@ void PositionControl_Reset(void)
 void PositionControl_Update(void)
 {
     float err_x = -GetPositionErrorX();
-    float err_y = -GetPositionErrorY();
+    // 2026-08-15 视觉双摄实测: 视觉 y+ = 车右侧 (信标在右 err.y>0), 而 target_vy 正=左移,
+    // 故 y 不加负号: 正误差 → PID输出负 → 右移. 原负号使正误差=左移, 方向反了.
+    // (x 保持负号: 视觉 x+ = 前方, 正误差 → 前进, 实测正确)
+    float err_y =  -GetPositionErrorY();
 
     // 完赛/发车延迟: 立即锁住
     if (race_done || !mission_armed || time_us - mission_arm_time < 3500000)

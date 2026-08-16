@@ -38,6 +38,9 @@ void Circle_ClosedLoop_Update(void);
 // W25Q64 掉电存储测试通路: 读ID + 扇区擦除 + 写读回比对, 结果打印到 UART_0
 void W25Q64_Test(void);
 
+// 2026-08-15 通信链路最小测试: UART1 纯轮询回显 (死循环, 其他逻辑全注释)
+void Uart1_EchoTest(void);
+
 // W25Q64 掉电持久化测试: 写"Hello W25Q64!" → 掉电 → 改宏重烧 → 读取验证掉电不丢数据
 // 模式切换在 test.c 内 W25Q64_PERSIST_WRITE 宏 (1=写, 0=读)
 void W25Q64_Persist_Test(void);

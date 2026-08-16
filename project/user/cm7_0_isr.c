@@ -43,6 +43,7 @@
 #include "inertial_nav.h"   // 暂时注释
 #include "QMC5883L.h"       // 磁力计椭圆校准采集
 #include "key_task.h"       // MAG_CALIB_MODE / MAG_CALIB_MOTOR_TEST
+#include "App_lora3a22.h"   // CONTROL_SRC_DRONE (ISR 里按控制源切 UART_1 接收处理, 2026-08-15)
 volatile int count = 0;
 volatile uint64_t time_us = 0;
 volatile uint16_t menu_tick_10ms = 0;   // 菜单显示节拍器 (10ms, pit0_ch10_isr 维护)
@@ -308,9 +309,17 @@ void uart1_isr (void)
 {
     if(uart_isr_mask(UART_1))            // 串口1接收中断
     {
-
-        wireless_module_uart_handler();  // 无线模块统一回调函数 (当前挂 lora3a22_uart_callback)
-        //HC06_UART_RX_Handler();        // 485/蓝牙接收暂用 (LoRa模拟无人机期间注释)
+        // 2026-08-15 修复: 之前 HC06_UART_RX_Handler 被注释 → 视觉/无人机帧字节没人读, 收不到任何数据
+        // 按控制源切换: 无人机/视觉走 HC06 (#x,y,flag$), LoRa遥控模拟走无线模块统一回调 (18字节结构化帧)
+#if CONTROL_SRC_DRONE
+        // 2026-08-15 修复4: 恢复单次调用 (两个 do-while 版本都有问题:
+        //  a) uart_isr_mask() 恒返回1(查使能掩码而非数据) → 无条件死循环
+        //  b) 按FIFO数量循环 → 循环体不搬新字节, 软件缓冲消费完但FIFO还有 → 死循环)
+        // SCB UART RX_NOT_EMPTY 是电平中断: FIFO 非空持续请求, 每次中断搬+消费1字节即可, 无需取空
+        HC06_UART_RX_Handler();      // 无人机/视觉: 读 UART_1 字节进 FIFO → HC06_Task 解析
+#else
+        wireless_module_uart_handler();  // LoRa遥控模拟: 无线模块统一回调函数 (当前挂 lora3a22_uart_callback)
+#endif
 
     }
     else                                // 串口1发送中断

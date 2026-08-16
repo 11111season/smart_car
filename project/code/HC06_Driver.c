@@ -92,6 +92,11 @@ void HC06_Init(uint32 baudrate)
     // 3. 使能接收中断
     uart_rx_interrupt(UART_1, 1);
 
+    // 2026-08-15 修复(已撤销): UART1接收中断优先级提到 1 反而导致中断完全不触发 (rx_irq=0).
+    // v1.3.6 无此行, 完整逻辑+PIT全开(含1us PIT_CH2) 也能正常接收 → 恢复默认优先级 7 (uart_init 内部设置)
+    // 若后续出现 PIT 压 UART 丢帧, 正确做法是压缩 PIT ISR 里的软IIC时间, 而不是动 UART 优先级
+    //interrupt_set_priority(CPUIntIdx3_IRQn, 1);
+
     //4.使能发送中断
     //uart_tx_interrupt(UART_1,1);
 
@@ -105,6 +110,8 @@ void ParseFrameData(const char *data, uint16_t len)
     // 预期数据格式: x,y,flag (flag: 1=发现信标, 2=丢失信标, 3=完赛)
     float x, y;
     int flag;
+    char echo_buf[64];
+    int  echo_len = 0;
     if (sscanf(data, "%f,%f,%d", &x, &y, &flag) == 3) {
         pos_error_x = x;
         pos_error_y = y;
@@ -112,9 +119,15 @@ void ParseFrameData(const char *data, uint16_t len)
         if (flag == 3) race_done = 1;        // flag=3 → 完赛
         if (flag == 2) flag2_count++;
         else           flag2_count = 0;
-        printf("DRONE: x=%.1f y=%.1f flag=%d f2cnt=%d race=%d\n", x, y, flag, flag2_count, race_done);
+        printf("DRONE-RX: [%s] errx=%.1f erry=%.1f flag=%d\n", data, x, y, flag);   // 2026-08-15 链路验证: 打印原始帧+解析结果
+        echo_len = snprintf(echo_buf, sizeof(echo_buf), "RX: [%s] errx=%.1f erry=%.1f flag=%d\r\n", data, x, y, flag);
     } else {
-        printf("DRONE: parse err: [%s]\n", data);
+        printf("DRONE-RX: [%s] parse err\n", data);
+        echo_len = snprintf(echo_buf, sizeof(echo_buf), "RX: [%s] PARSE ERR\r\n", data);
+    }
+    // 2026-08-15 链路验证: 收到帧回发 UART_1 (无线模块→视觉电脑), 不接烧录器也能看打印
+    for (int i = 0; i < echo_len && i < sizeof(echo_buf); i++) {
+        uart_write_byte(UART_1, (uint8_t)echo_buf[i]);
     }
 }
 
